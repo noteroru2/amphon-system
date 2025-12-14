@@ -3,7 +3,7 @@ import { useState } from "react";
 import { MainLayout } from "./layouts/MainLayout";
 import { LoginPage } from "./pages/LoginPage";
 
-import EmployeeHomePage from "./pages/Homepage";
+import EmployeeHomePage from "./pages/HomePage.tsx";
 
 import NewDepositPage from "./pages/deposit/NewDepositPage";
 import { DepositListPage } from "./pages/deposit/DepositListPage";
