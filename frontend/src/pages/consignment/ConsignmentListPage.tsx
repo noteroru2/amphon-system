@@ -113,13 +113,14 @@ export function ConsignmentListPage() {
   };
 
   // ✅ แสดงเฉพาะ “ยังไม่ขาย”
-  const activeRows = useMemo(() => {
+    const activeRows = useMemo(() => {
     const q = search.trim().toLowerCase();
 
-    return (Array.isArray(rows) ? rows : []).filter(...)
+    // ✅ กันพัง: ต่อให้ rows หลุดเป็น object ก็จะกลับเป็น []
+    const safeRows: ConsignmentApiRow[] = Array.isArray(rows) ? rows : [];
 
+    return safeRows
       .filter((r) => {
-        // บางระบบ status อาจอยู่ที่ contract หรืออยู่ที่ inventoryItem
         const contractSold = isSold(r.status);
         const invSold = isSold(r.inventoryItem?.status);
         if (contractSold || invSold) return false;
@@ -143,12 +144,12 @@ export function ConsignmentListPage() {
         return text.includes(q);
       })
       .sort((a, b) => {
-        // ใหม่สุดก่อน
         const da = a.createdAt ? new Date(a.createdAt).getTime() : 0;
         const db = b.createdAt ? new Date(b.createdAt).getTime() : 0;
         return db - da;
       });
   }, [rows, search]);
+
 
   const countActive = activeRows.length;
 
