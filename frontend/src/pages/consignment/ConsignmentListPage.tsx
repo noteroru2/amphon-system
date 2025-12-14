@@ -74,18 +74,35 @@ export function ConsignmentListPage() {
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
 
-  const fetchList = async () => {
+    const fetchList = async () => {
     try {
       setLoading(true);
-      const res = await axios.get<ConsignmentApiRow[]>("/api/consignments");
-      setRows(res.data || []);
+
+      const res = await axios.get("/api/consignments");
+      const payload = res.data as any;
+
+      // ✅ รองรับได้หลายรูปแบบ: array / {data: []} / {consignments: []} / {items: []}
+      const list: ConsignmentApiRow[] =
+        Array.isArray(payload)
+          ? payload
+          : Array.isArray(payload?.data)
+          ? payload.data
+          : Array.isArray(payload?.consignments)
+          ? payload.consignments
+          : Array.isArray(payload?.items)
+          ? payload.items
+          : [];
+
+      setRows(list);
     } catch (err) {
       console.error("GET /api/consignments error:", err);
       alert("ไม่สามารถดึงรายการฝากขายได้");
+      setRows([]); // ✅ กัน state ค้าง
     } finally {
       setLoading(false);
     }
   };
+
 
   useEffect(() => {
     fetchList();
@@ -99,7 +116,8 @@ export function ConsignmentListPage() {
   const activeRows = useMemo(() => {
     const q = search.trim().toLowerCase();
 
-    return (rows || [])
+    return (Array.isArray(rows) ? rows : []).filter(...)
+
       .filter((r) => {
         // บางระบบ status อาจอยู่ที่ contract หรืออยู่ที่ inventoryItem
         const contractSold = isSold(r.status);
