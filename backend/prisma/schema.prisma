@@ -1,0 +1,253 @@
+// prisma/schema.prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// -------- ENUMS --------
+
+enum ContractType {
+  DEPOSIT // ฝากดูแล
+  CONSIGNMENT // ฝากขาย (เผื่ออนาคต)
+}
+
+enum ContractStatus {
+  ACTIVE
+  REDEEMED
+  FORFEITED
+  RENEWED
+}
+
+enum InventorySourceType {
+  FORFEIT // ทรัพย์จากการตัดหลุดสัญญา
+  PURCHASE // ซื้อเข้าร้าน
+  CONSIGNMENT// ฝากขาย
+  OTHER
+}
+
+enum InventoryStatus {
+  IN_STOCK // ยังอยู่ในคลัง
+  SOLD // ขายแล้ว
+  WRITTEN_OFF // ตัดจำหน่าย/ทิ้ง
+}
+
+enum CashbookType {
+  IN
+  OUT
+}
+
+// -------- MODELS --------
+
+model Customer {
+  id        Int      @id @default(autoincrement())
+  name      String
+  idCard    String?  @unique
+  phone     String?
+  lineId    String?
+  lineToken String?
+  address   String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  contracts Contract[]
+
+  inventoryItemsBought InventoryItem[] @relation("InventoryBuyer")
+}
+
+model Contract {
+  id     Int            @id @default(autoincrement())
+  code   String         @unique // DEP-2025-001
+  type   ContractType
+  status ContractStatus
+
+  customerId Int
+  customer   Customer @relation(fields: [customerId], references: [id])
+
+  assetModel       String?
+  assetSerial      String?
+  assetCondition   String?
+  assetAccessories String?
+  storageCode      String?
+
+  principal Int // วงเงินประกัน
+  termDays  Int // 15 หรือ 30
+  feeConfig Json? // { docFee, storageFee, careFee, total }
+
+  startDate DateTime @default(now())
+  dueDate   DateTime
+
+  previousContractId Int?
+  previousContract   Contract?  @relation("RenewChain", fields: [previousContractId], references: [id])
+  renewedContracts   Contract[] @relation("RenewChain")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  images ContractImage[]
+
+  inventoryItems  InventoryItem[] @relation("InventoryFromContract")
+  cashbookEntries CashbookEntry[]
+
+  actionLogs ContractActionLog[]
+
+  @@index([customerId])
+  @@index([dueDate])
+  @@index([storageCode])
+}
+
+model ContractActionLog {
+  id         Int      @id @default(autoincrement())
+  contractId Int
+  contract   Contract @relation(fields: [contractId], references: [id])
+
+  action ContractActionType
+  amount Int                @default(0) // จำนวนเงินเกี่ยวกับ action นี้
+  note   String? // ข้อความอธิบายเพิ่มเติม (ใช้ภายหลังได้)
+
+  createdAt DateTime @default(now())
+}
+
+model ContractImage {
+  id         Int      @id @default(autoincrement())
+  contractId Int
+  contract   Contract @relation(fields: [contractId], references: [id])
+  urlOrData  String
+}
+
+model InventoryItem {
+  id          Int     @id @default(autoincrement())
+  code        String  @unique // รหัสสินค้าในคลัง เช่น INV-2025-001
+  name        String // ชื่อสินค้า เช่น "iPhone 13 Pro Max"
+  serial      String? // serial / IMEI
+  condition   String? // สภาพ
+  accessories String? // อุปกรณ์ที่ได้มา เช่น กล่อง สายชาร์จ เคส
+
+  // ที่เก็บ
+  storageLocation String? // ช่อง/กล่องเก็บ เช่น A-040
+
+  // ที่มา
+  sourceType         InventorySourceType?
+  sourceContractId   Int?
+  sourceContract     Contract?            @relation("InventoryFromContract", fields: [sourceContractId], references: [id])
+  sourceContractCode String? // เก็บเลขสัญญา DEP-2025-001 เผื่อใช้แสดงเร็ว ๆ
+
+  // การเงิน
+  cost           Decimal? // ทุนของร้าน (จากเงินต้นที่ใช้จริง + ต้นทุนอื่น ๆ)
+  appraisedPrice Decimal? // ราคาประเมิน
+  targetPrice    Decimal? // ราคาตั้งขาย
+  sellingPrice   Decimal? // ราคาขายรวมหรือเฉลี่ย ต่อชิ้น
+
+  // จำนวน (รองรับอนาคตขายหลายชิ้น)
+  quantity          Int @default(1) // จำนวนทั้งหมดที่อยู่ใน lot นี้
+  quantityAvailable Int @default(1) // เหลือเท่าไรในคลัง
+  quantitySold      Int @default(0) // ขายไปแล้วกี่ชิ้น
+
+  // ผลกำไร
+  grossProfit Decimal? // กำไรขั้นต้นรวมจาก lot นี้
+  netProfit   Decimal? // กำไรสุทธิ (หลังหักส่วนลด/ต้นทุนอื่น ฯลฯ)
+
+  status InventoryStatus @default(IN_STOCK)
+
+  // ผู้ซื้อ (ตอนขายออก)
+  buyerName       String?
+  buyerPhone      String?
+  buyerAddress    String?
+  buyerTaxId      String?
+  buyerCustomerId Int?
+  buyerCustomer   Customer? @relation("InventoryBuyer", fields: [buyerCustomerId], references: [id])
+
+  // Cashbook ที่เกี่ยวกับการขายชิ้นนี้
+  cashbookEntries CashbookEntry[] @relation("InventoryCashbook")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  consignmentContractId Int?
+  consignmentContract   ConsignmentContract?
+}
+
+model CashbookEntry {
+  id       Int          @id @default(autoincrement())
+  type     CashbookType
+  category String?
+  amount   Decimal      @db.Decimal(12, 2)
+
+  profit Decimal @default(0) @db.Decimal(12, 2)
+
+  contractId Int?
+  contract   Contract? @relation(fields: [contractId], references: [id])
+
+  inventoryItemId Int?
+  inventoryItem   InventoryItem? @relation("InventoryCashbook", fields: [inventoryItemId], references: [id])
+
+  description String?
+  createdAt   DateTime @default(now())
+}
+
+enum ContractActionType {
+  NEW_CONTRACT // ทำสัญญาใหม่
+  RENEW_CONTRACT // ต่อสัญญา ออกเล่มใหม่
+  CUT_PRINCIPAL // ตัดต้น / ปรับวงเงิน
+  REDEEM // ไถ่ถอน
+  FORFEIT // ตัดหลุด
+}
+
+model ConsignmentContract {
+  id   Int    @id @default(autoincrement())
+  code String @unique
+
+  // seller
+  sellerName    String
+  sellerIdCard  String?
+  sellerPhone   String?
+  sellerAddress String?
+
+  // item snapshot (กันเปลี่ยนทีหลัง)
+  itemName    String
+  serial      String?
+  condition   String?
+  accessories String?
+  photos      Json?
+
+  // money (Model A)
+  advanceAmount Decimal  @default(0) // จ่ายให้ลูกค้าตอนรับฝาก
+  netToSeller   Decimal  @default(0) // ลูกค้าได้สุทธิเมื่อขายได้ (ต่อชิ้น)
+  targetPrice   Decimal? // ราคาตั้งขาย (ต่อชิ้น)
+
+  status String @default("ACTIVE") // ACTIVE | SOLD | CANCELLED
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  inventoryItemId Int?           @unique
+  inventoryItem   InventoryItem? @relation(fields: [inventoryItemId], references: [id])
+}
+
+model PriceSuggestion {
+  id        Int      @id @default(autoincrement())
+  itemName  String
+  brand     String?
+  model     String?
+  spec      String?
+  condition String?
+  accessories String?
+  notes     String?
+
+  // ผลลัพธ์ AI
+  appraisedMin Decimal? @db.Decimal(12,2)
+  appraisedMax Decimal? @db.Decimal(12,2)
+  appraisedPrice Decimal? @db.Decimal(12,2)
+  targetPrice Decimal? @db.Decimal(12,2)
+  confidence Int? // 0-100
+  rationale  String?
+
+  // อ้างอิง context ภายในระบบ
+  refs Json? // เช่นตัวอย่าง inventoryItem ที่คล้ายกัน
+
+  createdAt DateTime @default(now())
+}
