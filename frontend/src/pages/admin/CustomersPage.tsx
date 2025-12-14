@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
 import axios from "axios";
+import { arrayFromApi } from "../../lib/arrayFromApi";
 
 type Segment = "BUYER" | "CONSIGNOR" | "DEPOSITOR";
 
@@ -10,7 +11,7 @@ type CustomerRow = {
   phone?: string | null;
   lineId?: string | null;
   address?: string | null;
-  segments: Segment[];
+  segments: Segment[]; // ต้องเป็น array เสมอ
 };
 
 function maskIdCard(v?: string | null) {
@@ -18,6 +19,19 @@ function maskIdCard(v?: string | null) {
   const s = v.replace(/\s/g, "");
   if (s.length < 6) return s;
   return s.slice(0, 1) + "-xxxx-xxxxx-xx-" + s.slice(-1);
+}
+
+// ✅ normalize แถวลูกค้าให้ปลอดภัย (กัน segments ไม่ใช่ array)
+function normalizeCustomerRow(x: any): CustomerRow {
+  return {
+    id: Number(x?.id ?? 0),
+    name: String(x?.name ?? ""),
+    idCard: x?.idCard ?? null,
+    phone: x?.phone ?? null,
+    lineId: x?.lineId ?? null,
+    address: x?.address ?? null,
+    segments: Array.isArray(x?.segments) ? x.segments : [],
+  };
 }
 
 export default function CustomersPage() {
@@ -31,11 +45,18 @@ export default function CustomersPage() {
     try {
       setErr("");
       setLoading(true);
-      const res = await axios.get("/api/customers", { params: query ? { q: query } : undefined });
-      setRows(res.data || []);
+
+      const res = await axios.get("/api/customers", {
+        params: query ? { q: query } : undefined,
+      });
+
+      // ✅ สำคัญ: normalize response ให้เป็น array เสมอ
+      const list = arrayFromApi<any>(res.data).map(normalizeCustomerRow);
+      setRows(list);
     } catch (e: any) {
       console.error(e);
       setErr(e?.response?.data?.message || e?.message || "โหลดข้อมูลลูกค้าไม่สำเร็จ");
+      setRows([]); // กันค้างค่าพัง
     } finally {
       setLoading(false);
     }
@@ -45,18 +66,21 @@ export default function CustomersPage() {
     fetchData("");
   }, []);
 
+  // ✅ guard rows ให้แน่ใจว่าเป็น array เสมอ
+  const safeRows = useMemo(() => (Array.isArray(rows) ? rows : []), [rows]);
+
   const counts = useMemo(() => {
-    const all = rows.length;
-    const buyer = rows.filter((r) => r.segments.includes("BUYER")).length;
-    const consignor = rows.filter((r) => r.segments.includes("CONSIGNOR")).length;
-    const depositor = rows.filter((r) => r.segments.includes("DEPOSITOR")).length;
+    const all = safeRows.length;
+    const buyer = safeRows.filter((r) => (Array.isArray(r.segments) ? r.segments : []).includes("BUYER")).length;
+    const consignor = safeRows.filter((r) => (Array.isArray(r.segments) ? r.segments : []).includes("CONSIGNOR")).length;
+    const depositor = safeRows.filter((r) => (Array.isArray(r.segments) ? r.segments : []).includes("DEPOSITOR")).length;
     return { all, buyer, consignor, depositor };
-  }, [rows]);
+  }, [safeRows]);
 
   const filtered = useMemo(() => {
-    if (tab === "ALL") return rows;
-    return rows.filter((r) => r.segments.includes(tab));
-  }, [rows, tab]);
+    if (tab === "ALL") return safeRows;
+    return safeRows.filter((r) => (Array.isArray(r.segments) ? r.segments : []).includes(tab));
+  }, [safeRows, tab]);
 
   const onSearch = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -82,43 +106,37 @@ export default function CustomersPage() {
 
         <div className="mb-4 flex flex-wrap gap-2">
           <button
+            type="button"
             onClick={() => setTab("ALL")}
-            className={`rounded px-3 py-2 text-sm shadow ${
-              tab === "ALL" ? "bg-slate-900 text-white" : "bg-white"
-            }`}
+            className={`rounded px-3 py-2 text-sm shadow ${tab === "ALL" ? "bg-slate-900 text-white" : "bg-white"}`}
           >
             ทั้งหมด ({counts.all})
           </button>
           <button
+            type="button"
             onClick={() => setTab("BUYER")}
-            className={`rounded px-3 py-2 text-sm shadow ${
-              tab === "BUYER" ? "bg-slate-900 text-white" : "bg-white"
-            }`}
+            className={`rounded px-3 py-2 text-sm shadow ${tab === "BUYER" ? "bg-slate-900 text-white" : "bg-white"}`}
           >
             ลูกค้ามาซื้อ ({counts.buyer})
           </button>
           <button
+            type="button"
             onClick={() => setTab("CONSIGNOR")}
-            className={`rounded px-3 py-2 text-sm shadow ${
-              tab === "CONSIGNOR" ? "bg-slate-900 text-white" : "bg-white"
-            }`}
+            className={`rounded px-3 py-2 text-sm shadow ${tab === "CONSIGNOR" ? "bg-slate-900 text-white" : "bg-white"}`}
           >
             ลูกค้ามาขาย/ฝากขาย ({counts.consignor})
           </button>
           <button
+            type="button"
             onClick={() => setTab("DEPOSITOR")}
-            className={`rounded px-3 py-2 text-sm shadow ${
-              tab === "DEPOSITOR" ? "bg-slate-900 text-white" : "bg-white"
-            }`}
+            className={`rounded px-3 py-2 text-sm shadow ${tab === "DEPOSITOR" ? "bg-slate-900 text-white" : "bg-white"}`}
           >
             ลูกค้ามาฝากดูแล ({counts.depositor})
           </button>
         </div>
 
         {err ? (
-          <div className="mb-4 rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
-            {err}
-          </div>
+          <div className="mb-4 rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{err}</div>
         ) : null}
 
         <div className="rounded bg-white shadow">
@@ -135,50 +153,41 @@ export default function CustomersPage() {
                   <th className="px-4 py-3">เลขบัตร</th>
                   <th className="px-4 py-3">กลุ่ม</th>
                   <th className="px-4 py-3">จัดการ</th>
-
                 </tr>
               </thead>
               <tbody>
                 {filtered.map((r) => (
                   <tr key={r.id} className="border-t">
-                    <td className="px-4 py-3 font-medium">{r.name}</td>
+                    <td className="px-4 py-3 font-medium">{r.name || "-"}</td>
                     <td className="px-4 py-3">{r.phone || "-"}</td>
                     <td className="px-4 py-3">{maskIdCard(r.idCard)}</td>
                     <td className="px-4 py-3">
                       <div className="flex flex-wrap gap-2">
                         {r.segments.includes("BUYER") ? (
-                          <span className="rounded bg-emerald-50 px-2 py-1 text-xs text-emerald-700">
-                            มาซื้อ
-                          </span>
+                          <span className="rounded bg-emerald-50 px-2 py-1 text-xs text-emerald-700">มาซื้อ</span>
                         ) : null}
                         {r.segments.includes("CONSIGNOR") ? (
-                          <span className="rounded bg-amber-50 px-2 py-1 text-xs text-amber-700">
-                            ขาย/ฝากขาย
-                          </span>
+                          <span className="rounded bg-amber-50 px-2 py-1 text-xs text-amber-700">ขาย/ฝากขาย</span>
                         ) : null}
                         {r.segments.includes("DEPOSITOR") ? (
-                          <span className="rounded bg-sky-50 px-2 py-1 text-xs text-sky-700">
-                            ฝากดูแล
-                          </span>
+                          <span className="rounded bg-sky-50 px-2 py-1 text-xs text-sky-700">ฝากดูแล</span>
                         ) : null}
                         {r.segments.length === 0 ? (
-                          <span className="rounded bg-slate-100 px-2 py-1 text-xs text-slate-600">
-                            ยังไม่จัดกลุ่ม
-                          </span>
+                          <span className="rounded bg-slate-100 px-2 py-1 text-xs text-slate-600">ยังไม่จัดกลุ่ม</span>
                         ) : null}
                       </div>
                     </td>
                     <td className="px-4 py-3">
-  <a
-    href={`/customers/${r.id}`}
-    className="rounded bg-slate-900 px-3 py-2 text-xs text-white hover:opacity-90"
-  >
-    ดูรายละเอียด
-  </a>
-</td>
-
+                      <a
+                        href={`/customers/${r.id}`}
+                        className="rounded bg-slate-900 px-3 py-2 text-xs text-white hover:opacity-90"
+                      >
+                        ดูรายละเอียด
+                      </a>
+                    </td>
                   </tr>
                 ))}
+
                 {!loading && filtered.length === 0 ? (
                   <tr>
                     <td className="px-4 py-6 text-center text-slate-500" colSpan={5}>
