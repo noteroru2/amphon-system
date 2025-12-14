@@ -1,7 +1,8 @@
 // src/pages/InventoryPage.tsx
-import React, { useEffect, useState, ChangeEvent } from "react";
+import React, { useEffect, useMemo, useState, ChangeEvent } from "react";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
+import { arrayFromApi } from "../lib/arrayFromApi";
 
 type InventoryItemRow = {
   id: number;
@@ -38,8 +39,7 @@ const sourceLabel = (sourceType: string): string => {
   return "-";
 };
 
-const formatMoney = (n: number | null | undefined) =>
-  (Number(n ?? 0)).toLocaleString();
+const formatMoney = (n: number | null | undefined) => Number(n ?? 0).toLocaleString();
 
 const InventoryPage: React.FC = () => {
   const navigate = useNavigate();
@@ -52,11 +52,18 @@ const InventoryPage: React.FC = () => {
   const fetchInventory = async () => {
     try {
       setLoading(true);
-      const res = await axios.get<InventoryItemRow[]>("/api/inventory");
-      setItems(res.data || []);
+
+      // ✅ อย่าฟิก generic เป็น InventoryItemRow[] เพราะ backend อาจส่ง wrapper object
+      const res = await axios.get("/api/inventory");
+
+      // ✅ normalize ให้เป็น array เสมอ
+      const list = arrayFromApi<InventoryItemRow>(res.data);
+
+      setItems(list);
     } catch (err) {
       console.error("GET /api/inventory error:", err);
       alert("ไม่สามารถดึงข้อมูลคลังสินค้าได้");
+      setItems([]); // ✅ กัน state ค้าง
     } finally {
       setLoading(false);
     }
@@ -70,34 +77,37 @@ const InventoryPage: React.FC = () => {
     setSearch(e.target.value);
   };
 
-  const filteredItems = items.filter((it) => {
-    const text =
-      (it.name || "") +
-      " " +
-      (it.serial || "") +
-      " " +
-      (it.code || "") +
-      " " +
-      sourceLabel(it.sourceType);
+  // ✅ กันพัง + ทำให้คำนวณไม่หนักทุก render
+  const filteredItems = useMemo(() => {
+    const safeItems: InventoryItemRow[] = Array.isArray(items) ? items : [];
 
-    if (search.trim()) {
-      const q = search.trim().toLowerCase();
-      if (!text.toLowerCase().includes(q)) return false;
-    }
+    const q = search.trim().toLowerCase();
 
-    const st = it.status?.toUpperCase() || "";
+    return safeItems.filter((it) => {
+      const text =
+        (it.name || "") +
+        " " +
+        (it.serial || "") +
+        " " +
+        (it.code || "") +
+        " " +
+        sourceLabel(it.sourceType);
 
-    if (tab === "READY") {
-      const isReady =
-        st === "IN_STOCK" || st === "READY" || st === "READY_FOR_SALE";
-      return isReady;
-    }
-    if (tab === "SOLD") {
-      const isSold = st === "SOLD" || st === "SOLD_OUT";
-      return isSold;
-    }
-    return true; // ALL
-  });
+      if (q) {
+        if (!text.toLowerCase().includes(q)) return false;
+      }
+
+      const st = it.status?.toUpperCase() || "";
+
+      if (tab === "READY") {
+        return st === "IN_STOCK" || st === "READY" || st === "READY_FOR_SALE";
+      }
+      if (tab === "SOLD") {
+        return st === "SOLD" || st === "SOLD_OUT";
+      }
+      return true; // ALL
+    });
+  }, [items, search, tab]);
 
   return (
     <div className="min-h-screen bg-slate-100">
@@ -105,12 +115,8 @@ const InventoryPage: React.FC = () => {
         {/* Header */}
         <div className="mb-4 flex items-center justify-between gap-4">
           <div>
-            <h1 className="text-xl font-semibold text-slate-800">
-              คลังสินค้า (Inventory)
-            </h1>
-            <p className="text-sm text-slate-500">
-              จัดการสต๊อกสินค้า เตรียมพร้อมขาย และพิมพ์ใบเสร็จทีหลัง
-            </p>
+            <h1 className="text-xl font-semibold text-slate-800">คลังสินค้า (Inventory)</h1>
+            <p className="text-sm text-slate-500">จัดการสต๊อกสินค้า เตรียมพร้อมขาย และพิมพ์ใบเสร็จทีหลัง</p>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
@@ -140,9 +146,7 @@ const InventoryPage: React.FC = () => {
                 type="button"
                 onClick={() => setTab("ALL")}
                 className={`rounded-full px-3 py-1.5 text-xs font-medium ${
-                  tab === "ALL"
-                    ? "bg-blue-600 text-white"
-                    : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                  tab === "ALL" ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
                 }`}
               >
                 ทั้งหมด
@@ -151,9 +155,7 @@ const InventoryPage: React.FC = () => {
                 type="button"
                 onClick={() => setTab("READY")}
                 className={`rounded-full px-3 py-1.5 text-xs font-medium ${
-                  tab === "READY"
-                    ? "bg-blue-600 text-white"
-                    : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                  tab === "READY" ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
                 }`}
               >
                 พร้อมขาย
@@ -162,9 +164,7 @@ const InventoryPage: React.FC = () => {
                 type="button"
                 onClick={() => setTab("SOLD")}
                 className={`rounded-full px-3 py-1.5 text-xs font-medium ${
-                  tab === "SOLD"
-                    ? "bg-blue-600 text-white"
-                    : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                  tab === "SOLD" ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
                 }`}
               >
                 ขายแล้ว
@@ -194,45 +194,31 @@ const InventoryPage: React.FC = () => {
 
           {/* Table body */}
           {loading ? (
-            <div className="px-6 py-8 text-center text-sm text-slate-500">
-              กำลังโหลดข้อมูล...
-            </div>
+            <div className="px-6 py-8 text-center text-sm text-slate-500">กำลังโหลดข้อมูล...</div>
           ) : filteredItems.length === 0 ? (
-            <div className="px-6 py-8 text-center text-sm text-slate-500">
-              ไม่มีรายการสินค้าในคลัง
-            </div>
+            <div className="px-6 py-8 text-center text-sm text-slate-500">ไม่มีรายการสินค้าในคลัง</div>
           ) : (
             <div>
               {filteredItems.map((item) => {
                 const st = statusLabel(item.status);
                 return (
-                  <div
-                    key={item.id}
-                    className="grid grid-cols-12 items-center border-t border-slate-100 px-6 py-4 text-sm"
-                  >
+                  <div key={item.id} className="grid grid-cols-12 items-center border-t border-slate-100 px-6 py-4 text-sm">
                     {/* สินค้า */}
                     <div className="col-span-5">
-                      <div className="font-medium text-slate-800">
-                        {item.name || "-"}
-                      </div>
+                      <div className="font-medium text-slate-800">{item.name || "-"}</div>
                       <div className="mt-0.5 text-xs text-slate-500">
                         <span className="mr-2">
                           Code: <span className="font-mono">{item.code}</span>
                         </span>
                         {item.serial && (
                           <span>
-                            SN:{" "}
-                            <span className="font-mono">{item.serial}</span>
+                            SN: <span className="font-mono">{item.serial}</span>
                           </span>
                         )}
                       </div>
                       <div className="mt-0.5 text-[11px] text-slate-400">
                         เข้าเมื่อ:{" "}
-                        {item.createdAt
-                          ? new Date(
-                              item.createdAt
-                            ).toLocaleDateString("th-TH")
-                          : "-"}
+                        {item.createdAt ? new Date(item.createdAt).toLocaleDateString("th-TH") : "-"}
                         {" · "}
                         ทุนต่อชิ้น: {formatMoney(item.cost)} บาท
                       </div>
@@ -240,22 +226,16 @@ const InventoryPage: React.FC = () => {
 
                     {/* สถานะ */}
                     <div className="col-span-2">
-                      <span
-                        className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${st.colorClass}`}
-                      >
+                      <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${st.colorClass}`}>
                         {st.text}
                       </span>
                     </div>
 
                     {/* ที่มา */}
-                    <div className="col-span-2 text-slate-600">
-                      {sourceLabel(item.sourceType)}
-                    </div>
+                    <div className="col-span-2 text-slate-600">{sourceLabel(item.sourceType)}</div>
 
                     {/* จำนวนคงเหลือ */}
-                    <div className="col-span-1 text-center text-slate-700">
-                      {item.quantityAvailable ?? 0}
-                    </div>
+                    <div className="col-span-1 text-center text-slate-700">{item.quantityAvailable ?? 0}</div>
 
                     {/* ราคาขาย */}
                     <div className="col-span-1 text-right font-semibold text-slate-800">
@@ -266,14 +246,9 @@ const InventoryPage: React.FC = () => {
                     <div className="col-span-1 text-right">
                       <button
                         type="button"
-                        onClick={() =>
-                          navigate(`/inventory/sell/${item.id}`)
-                        }
+                        onClick={() => navigate(`/inventory/sell/${item.id}`)}
                         className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-blue-700 disabled:opacity-60"
-                        disabled={
-                          item.status?.toUpperCase() === "SOLD" ||
-                          item.status?.toUpperCase() === "SOLD_OUT"
-                        }
+                        disabled={item.status?.toUpperCase() === "SOLD" || item.status?.toUpperCase() === "SOLD_OUT"}
                       >
                         แจ้งขาย
                       </button>
