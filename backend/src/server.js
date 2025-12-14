@@ -17,22 +17,34 @@ const allowList = (process.env.CORS_ORIGINS || "")
   .map((s) => s.trim())
   .filter(Boolean);
 
+
+// ===== CORS (Render/Vercel) =====
+const allowList = (process.env.CORS_ORIGINS || "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+
 app.use(
   cors({
-    origin: function (origin, callback) {
-      // อนุญาต request ที่ไม่มี origin (เช่น curl, mobile app บางแบบ)
-      if (!origin) return callback(null, true);
+    origin: (origin, cb) => {
+      // allow curl/postman/no-origin
+      if (!origin) return cb(null, true);
 
-      // ถ้าไม่ได้ตั้ง allowList => อนุญาตทั้งหมด (ช่วยตอน dev)
-      if (allowList.length === 0) return callback(null, true);
+      // if not set, allow all (dev safe)
+      if (allowList.length === 0) return cb(null, true);
 
-      if (allowList.includes(origin)) return callback(null, true);
-
-      return callback(new Error("CORS blocked: " + origin), false);
+      if (allowList.includes(origin)) return cb(null, true);
+      return cb(new Error("CORS blocked: " + origin), false);
     },
     credentials: true,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
   })
 );
+
+// ✅ ตอบ preflight
+app.options("*", cors());
+
 
 // ====== Health Check ======
 app.get("/health", async (req, res) => {
