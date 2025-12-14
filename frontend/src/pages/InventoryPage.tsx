@@ -4,6 +4,7 @@ import axios from "axios";
 import { useNavigate } from "react-router-dom";
 import { arrayFromApi } from "../lib/arrayFromApi";
 
+
 type InventoryItemRow = {
   id: number;
   code: string;
