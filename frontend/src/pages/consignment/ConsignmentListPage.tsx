@@ -2,6 +2,7 @@
 import React, { useEffect, useMemo, useState, ChangeEvent } from "react";
 import axios from "axios";
 import { useNavigate } from "react-router-dom";
+import { arrayFromApi } from "../../lib/arrayFromApi"; // ✅ ใช้ helper กลาง
 
 type ConsignmentApiRow = {
   id: number;
@@ -74,35 +75,23 @@ export function ConsignmentListPage() {
   const [loading, setLoading] = useState(false);
   const [search, setSearch] = useState("");
 
-    const fetchList = async () => {
+  const fetchList = async () => {
     try {
       setLoading(true);
 
       const res = await axios.get("/api/consignments");
-      const payload = res.data as any;
-
-      // ✅ รองรับได้หลายรูปแบบ: array / {data: []} / {consignments: []} / {items: []}
-      const list: ConsignmentApiRow[] =
-        Array.isArray(payload)
-          ? payload
-          : Array.isArray(payload?.data)
-          ? payload.data
-          : Array.isArray(payload?.consignments)
-          ? payload.consignments
-          : Array.isArray(payload?.items)
-          ? payload.items
-          : [];
+      // ✅ บังคับให้เป็น array เสมอ (รองรับ wrapper ได้หลายรูปแบบจาก helper)
+      const list = arrayFromApi<ConsignmentApiRow>(res.data);
 
       setRows(list);
     } catch (err) {
       console.error("GET /api/consignments error:", err);
       alert("ไม่สามารถดึงรายการฝากขายได้");
-      setRows([]); // ✅ กัน state ค้าง
+      setRows([]);
     } finally {
       setLoading(false);
     }
   };
-
 
   useEffect(() => {
     fetchList();
@@ -113,10 +102,8 @@ export function ConsignmentListPage() {
   };
 
   // ✅ แสดงเฉพาะ “ยังไม่ขาย”
-    const activeRows = useMemo(() => {
+  const activeRows = useMemo(() => {
     const q = search.trim().toLowerCase();
-
-    // ✅ กันพัง: ต่อให้ rows หลุดเป็น object ก็จะกลับเป็น []
     const safeRows: ConsignmentApiRow[] = Array.isArray(rows) ? rows : [];
 
     return safeRows
@@ -150,7 +137,6 @@ export function ConsignmentListPage() {
       });
   }, [rows, search]);
 
-
   const countActive = activeRows.length;
 
   return (
@@ -160,9 +146,7 @@ export function ConsignmentListPage() {
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h1 className="text-lg font-semibold text-slate-900">รายการฝากขาย</h1>
-            <p className="text-xs text-slate-500">
-              แสดงเฉพาะรายการที่ยังไม่ขายออก ({countActive} รายการ)
-            </p>
+            <p className="text-xs text-slate-500">แสดงเฉพาะรายการที่ยังไม่ขายออก ({countActive} รายการ)</p>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
@@ -175,9 +159,10 @@ export function ConsignmentListPage() {
               {loading ? "กำลังโหลด..." : "รีเฟรช"}
             </button>
 
+            {/* ✅ ต้องอยู่ใต้ /app */}
             <button
               type="button"
-              onClick={() => navigate("/consignments/new")}
+              onClick={() => navigate("/app/consignments/new")}
               className="rounded-full bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-700"
             >
               + เพิ่มสัญญาฝากขาย
@@ -211,9 +196,7 @@ export function ConsignmentListPage() {
           {loading ? (
             <div className="px-6 py-10 text-center text-sm text-slate-500">กำลังโหลดข้อมูล...</div>
           ) : activeRows.length === 0 ? (
-            <div className="px-6 py-10 text-center text-sm text-slate-500">
-              ยังไม่มีรายการฝากขายที่กำลังขายอยู่
-            </div>
+            <div className="px-6 py-10 text-center text-sm text-slate-500">ยังไม่มีรายการฝากขายที่กำลังขายอยู่</div>
           ) : (
             <div>
               {activeRows.map((c) => {
@@ -232,10 +215,7 @@ export function ConsignmentListPage() {
                 const target = fmtMoney(c.targetPrice ?? inv?.targetPrice);
 
                 return (
-                  <div
-                    key={c.id}
-                    className="grid grid-cols-12 items-center border-t border-slate-100 px-6 py-4 text-sm"
-                  >
+                  <div key={c.id} className="grid grid-cols-12 items-center border-t border-slate-100 px-6 py-4 text-sm">
                     {/* Contract */}
                     <div className="col-span-3">
                       <div className="flex items-center gap-2">
@@ -244,17 +224,13 @@ export function ConsignmentListPage() {
                           {st.text}
                         </span>
                       </div>
-                      <div className="mt-0.5 text-xs text-slate-500">
-                        วันที่สร้าง: {fmtDate(c.createdAt)}
-                      </div>
+                      <div className="mt-0.5 text-xs text-slate-500">วันที่สร้าง: {fmtDate(c.createdAt)}</div>
                     </div>
 
                     {/* Seller */}
                     <div className="col-span-3">
                       <div className="font-medium text-slate-800">{displaySeller}</div>
-                      <div className="mt-0.5 text-xs text-slate-500">
-                        {displayPhone ? `โทร: ${displayPhone}` : "—"}
-                      </div>
+                      <div className="mt-0.5 text-xs text-slate-500">{displayPhone ? `โทร: ${displayPhone}` : "—"}</div>
                     </div>
 
                     {/* Item */}
@@ -290,22 +266,26 @@ export function ConsignmentListPage() {
                       </div>
 
                       <div className="mt-2 flex justify-end gap-2">
+                        {/* ✅ ต้องอยู่ใต้ /app */}
                         <button
                           type="button"
-                          onClick={() => navigate("/inventory")}
+                          onClick={() => navigate("/app/inventory")}
                           className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
                         >
                           ไปคลัง
                         </button>
 
-                        {/* เผื่ออนาคตทำ detail */}
                         <button
-                           type="button"
-                           onClick={(e) => { e.stopPropagation(); navigate(`/consignments/${c.id}`); }}
-                           className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
-                          >
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            // ✅ ต้องอยู่ใต้ /app
+                            navigate(`/app/consignments/${c.id}`);
+                          }}
+                          className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                        >
                           จัดการ
-                          </button>
+                        </button>
                       </div>
                     </div>
                   </div>
