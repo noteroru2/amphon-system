@@ -292,9 +292,9 @@ const handleIdCardFile = async (e: ChangeEvent<HTMLInputElement>) => {
       setShowSuccess(true);
 
       if (created && created.id) {
-        navigate(`/contracts/${created.id}`);
+        navigate(`/app/contracts/${created.id}`);
       } else {
-        navigate("/deposit/list");
+        navigate("/app/deposit/list");
       }
     } catch (err) {
       console.error("บันทึกสัญญาไม่สำเร็จ", err);

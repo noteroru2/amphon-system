@@ -36,7 +36,13 @@ import ApiTestPage from "./pages/ApiTestPage";
 
 export type UserRole = "ADMIN" | "STAFF" | null;
 
-function ProtectedRoute({ role, children }: { role: UserRole; children: JSX.Element }) {
+function ProtectedRoute({
+  role,
+  children,
+}: {
+  role: UserRole;
+  children: JSX.Element;
+}) {
   if (!role) return <Navigate to="/login" replace />;
   return children;
 }
@@ -53,8 +59,34 @@ export default function App() {
     <Routes>
       {/* ✅ หน้าแรก = login */}
       <Route path="/" element={<Navigate to="/login" replace />} />
-
       <Route path="/login" element={<LoginPage onLoggedIn={setRole} />} />
+
+      {/* ✅ รองรับลิงก์/โค้ดเก่า (ไม่มี /app) ให้ redirect เข้า /app อัตโนมัติ */}
+      <Route path="/deposit/new" element={<Navigate to="/app/deposit/new" replace />} />
+      <Route path="/deposit/list" element={<Navigate to="/app/deposit/list" replace />} />
+      <Route path="/deposit/history" element={<Navigate to="/app/deposit/history" replace />} />
+
+      <Route path="/contracts/:id" element={<Navigate to="/app/contracts/:id" replace />} />
+      <Route path="/contracts/:id/renew" element={<Navigate to="/app/contracts/:id/renew" replace />} />
+      <Route path="/contracts/:id/redeem" element={<Navigate to="/app/contracts/:id/redeem" replace />} />
+      <Route path="/contracts/:id/cut-principal" element={<Navigate to="/app/contracts/:id/cut-principal" replace />} />
+      <Route path="/contracts/:id/forfeit" element={<Navigate to="/app/contracts/:id/forfeit" replace />} />
+
+      <Route path="/consignments" element={<Navigate to="/app/consignments" replace />} />
+      <Route path="/consignments/new" element={<Navigate to="/app/consignments/new" replace />} />
+      <Route path="/consignments/:id" element={<Navigate to="/app/consignments/:id" replace />} />
+
+      <Route path="/inventory" element={<Navigate to="/app/inventory" replace />} />
+      <Route path="/inventory/sell/:id" element={<Navigate to="/app/inventory/sell/:id" replace />} />
+      <Route path="/inventory/bulk-sell" element={<Navigate to="/app/inventory/bulk-sell" replace />} />
+      <Route path="/intake/new" element={<Navigate to="/app/intake/new" replace />} />
+
+      <Route path="/customers/:id" element={<Navigate to="/app/customers/:id" replace />} />
+      <Route path="/price-check" element={<Navigate to="/app/price-check" replace />} />
+
+      <Route path="/admin/stats" element={<Navigate to="/app/admin/stats" replace />} />
+      <Route path="/admin/customers" element={<Navigate to="/app/admin/customers" replace />} />
+      <Route path="/admin/cashbook" element={<Navigate to="/app/admin/cashbook" replace />} />
 
       {/* ✅ แอพจริงอยู่ใต้ /app */}
       <Route
@@ -93,21 +125,17 @@ export default function App() {
         {/* ลูกค้า/ประเมินราคา */}
         <Route path="customers/:id" element={<CustomerDetailPage />} />
         <Route path="price-check" element={<PriceAssessmentPage />} />
-        
-        
 
         {/* Admin */}
         <Route path="admin/stats" element={<StatsReportPage />} />
         <Route path="admin/customers" element={<CustomersPage />} />
         <Route path="admin/cashbook" element={<CashbookPage />} />
       </Route>
-      
+
       <Route path="/api-test" element={<ApiTestPage />} />
 
-      {/* fallback */}
+      {/* fallback: ถ้าเข้า path แปลก ๆ ให้กลับไปหน้า login */}
       <Route path="*" element={<Navigate to="/login" replace />} />
-
-      
     </Routes>
   );
 }

@@ -55,26 +55,33 @@ type MonthOption = {
 };
 
 export function DepositHistoryPage() {
-  const { data, error } = useSWR<Contract[]>("/api/contracts", fetcher);
+  const { data, error } = useSWR<any>("/api/contracts", fetcher);
   const [search, setSearch] = useState("");
   const [selectedMonth, setSelectedMonth] = useState<string>("all");
 
+  // ✅ ทำให้ data กลายเป็น array เสมอ (กัน API ส่งรูปแบบอื่น)
   const contracts = useMemo<Contract[]>(() => {
-    if (!data) return [];
-    if (Array.isArray(data)) return data;
-    if ((data as any).items && Array.isArray((data as any).items)) {
-      return (data as any).items;
-    }
-    return [];
+    const payload = data;
+
+    const list: Contract[] =
+      Array.isArray(payload)
+        ? payload
+        : Array.isArray(payload?.items)
+        ? payload.items
+        : Array.isArray(payload?.data)
+        ? payload.data
+        : Array.isArray(payload?.contracts)
+        ? payload.contracts
+        : [];
+
+    return list;
   }, [data]);
 
   // --- หา set ของสัญญา "เดิม" ที่มีเล่มใหม่ต่อจากมัน ---
   const rolledIds = useMemo<Set<number>>(() => {
     const s = new Set<number>();
     contracts.forEach((c) => {
-      if (c.previousContractId) {
-        s.add(c.previousContractId);
-      }
+      if (c.previousContractId) s.add(c.previousContractId);
     });
     return s;
   }, [contracts]);
@@ -118,9 +125,7 @@ export function DepositHistoryPage() {
 
   if (!data) {
     return (
-      <div className="p-4 text-xs text-slate-500">
-        กำลังโหลดประวัติสัญญา...
-      </div>
+      <div className="p-4 text-xs text-slate-500">กำลังโหลดประวัติสัญญา...</div>
     );
   }
 
@@ -136,85 +141,75 @@ export function DepositHistoryPage() {
   };
 
   // --- หมายเหตุ ---
-  const renderNote = (c: Contract, rolledIds: Set<number>): string => {
-  const logs = (c.logs || []).slice().sort((a, b) =>
-    a.createdAt < b.createdAt ? -1 : 1
-  );
-  const latest = logs[logs.length - 1];
+  const renderNote = (c: Contract, rolledIdsSet: Set<number>): string => {
+    const logs = Array.isArray(c.logs) ? c.logs : [];
+    const sortedLogs = logs.slice().sort((a, b) =>
+      a.createdAt < b.createdAt ? -1 : 1
+    );
+    const latest = sortedLogs[sortedLogs.length - 1];
 
-  const formatAmount = (amt: number) =>
-    amt ? `${amt.toLocaleString()} บาท` : "";
+    const formatAmount = (amt: number) =>
+      amt ? `${amt.toLocaleString()} บาท` : "";
 
-  const isRolledSource = rolledIds.has(c.id);
+    const isRolledSource = rolledIdsSet.has(c.id);
 
-  // 1) สัญญาเดิมที่ถูกต่อเล่มใหม่
-  if (isRolledSource) {
-    return `ปิดสัญญา (มีเล่มใหม่) วันที่ ${formatDate(
-      c.updatedAt || c.createdAt
-    )}`;
-  }
-
-  if (!logs.length) {
-    // fallback แบบเดิมถ้ายังไม่มี log
-    if (c.status === "ACTIVE" && !c.previousContractId) {
-      return `ทำสัญญาใหม่ วันที่ ${formatDate(c.createdAt)}`;
+    // 1) สัญญาเดิมที่ถูกต่อเล่มใหม่
+    if (isRolledSource) {
+      return `ปิดสัญญา (มีเล่มใหม่) วันที่ ${formatDate(
+        c.updatedAt || c.createdAt
+      )}`;
     }
-    if (c.status === "REDEEMED") {
-      return `ไถ่ถอน วันที่ ${formatDate(c.updatedAt || c.createdAt)}`;
-    }
-    if (c.status === "FORFEITED") {
-      return `ตัดหลุด วันที่ ${formatDate(c.updatedAt || c.createdAt)}`;
-    }
-    return "";
-  }
 
-  // 2) หา log ตัดต้นล่าสุด (ถ้ามี)
-  const latestCut = [...logs]
-    .reverse()
-    .find((l) => l.action === "CUT_PRINCIPAL");
-
-  if (
-    latestCut &&
-    c.status === "ACTIVE" &&
-    !c.previousContractId // ยังเป็นเล่มแรก
-  ) {
-    return `ปรับวงเงิน (ตัดต้น) ${formatAmount(
-      latestCut.amount
-    )} ล่าสุด วันที่ ${formatDate(latestCut.createdAt)}`;
-  }
-
-  // 3) แปล action จาก log ล่าสุด
-  switch (latest.action) {
-    case "NEW_CONTRACT":
-      return `ทำสัญญาใหม่ ต้น ${formatAmount(
-        latest.amount
-      )} วันที่ ${formatDate(latest.createdAt)}`;
-
-    case "RENEW_CONTRACT":
-      return `ต่อสัญญาใหม่ ต้น ${formatAmount(
-        latest.amount
-      )} วันที่ ${formatDate(latest.createdAt)}`;
-
-    case "REDEEM":
-      return `ไถ่ถอน ${formatAmount(
-        latest.amount
-      )} วันที่ ${formatDate(latest.createdAt)}`;
-
-    case "FORFEIT":
-      return `ตัดหลุด ${formatAmount(
-        latest.amount
-      )} วันที่ ${formatDate(latest.createdAt)}`;
-
-    case "CUT_PRINCIPAL":
-      return `ปรับวงเงิน (ตัดต้น) ${formatAmount(
-        latest.amount
-      )} วันที่ ${formatDate(latest.createdAt)}`;
-
-    default:
+    if (!sortedLogs.length) {
+      if (c.status === "ACTIVE" && !c.previousContractId) {
+        return `ทำสัญญาใหม่ วันที่ ${formatDate(c.createdAt)}`;
+      }
+      if (c.status === "REDEEMED") {
+        return `ไถ่ถอน วันที่ ${formatDate(c.updatedAt || c.createdAt)}`;
+      }
+      if (c.status === "FORFEITED") {
+        return `ตัดหลุด วันที่ ${formatDate(c.updatedAt || c.createdAt)}`;
+      }
       return "";
-  }
-};
+    }
 
+    // 2) หา log ตัดต้นล่าสุด (ถ้ามี)
+    const latestCut = [...sortedLogs]
+      .reverse()
+      .find((l) => l.action === "CUT_PRINCIPAL");
+
+    if (latestCut && c.status === "ACTIVE" && !c.previousContractId) {
+      return `ปรับวงเงิน (ตัดต้น) ${formatAmount(
+        latestCut.amount
+      )} ล่าสุด วันที่ ${formatDate(latestCut.createdAt)}`;
+    }
+
+    // 3) แปล action จาก log ล่าสุด
+    switch (latest.action) {
+      case "NEW_CONTRACT":
+        return `ทำสัญญาใหม่ ต้น ${formatAmount(latest.amount)} วันที่ ${formatDate(
+          latest.createdAt
+        )}`;
+      case "RENEW_CONTRACT":
+        return `ต่อสัญญาใหม่ ต้น ${formatAmount(latest.amount)} วันที่ ${formatDate(
+          latest.createdAt
+        )}`;
+      case "REDEEM":
+        return `ไถ่ถอน ${formatAmount(latest.amount)} วันที่ ${formatDate(
+          latest.createdAt
+        )}`;
+      case "FORFEIT":
+        return `ตัดหลุด ${formatAmount(latest.amount)} วันที่ ${formatDate(
+          latest.createdAt
+        )}`;
+      case "CUT_PRINCIPAL":
+        return `ปรับวงเงิน (ตัดต้น) ${formatAmount(latest.amount)} วันที่ ${formatDate(
+          latest.createdAt
+        )}`;
+      default:
+        return "";
+    }
+  };
 
   // --- ฟิลเตอร์ ---
   const filtered = contracts
@@ -223,7 +218,7 @@ export function DepositHistoryPage() {
       if (!search.trim()) return true;
       const q = search.trim().toLowerCase();
       return (
-        c.code.toLowerCase().includes(q) ||
+        (c.code || "").toLowerCase().includes(q) ||
         (c.customer?.name || "").toLowerCase().includes(q) ||
         (c.asset?.modelName || "").toLowerCase().includes(q) ||
         (c.asset?.serial || "").toLowerCase().includes(q) ||
@@ -241,11 +236,11 @@ export function DepositHistoryPage() {
         String(d.getMonth() + 1).padStart(2, "0");
       return key === selectedMonth;
     })
-    .sort(
-      (a, b) =>
-        new Date(b.createdAt || "").getTime() -
-        new Date(a.createdAt || "").getTime()
-    );
+    .sort((a, b) => {
+      const da = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+      const db = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+      return db - da; // ใหม่สุดก่อน
+    });
 
   const renderStatus = (c: Contract) => {
     const base =
@@ -253,7 +248,6 @@ export function DepositHistoryPage() {
     const isRolledSource = rolledIds.has(c.id);
 
     if (isRolledSource) {
-      // สัญญาเดิมที่มีเล่มใหม่ต่อ
       return (
         <span className={`${base} bg-amber-50 text-amber-700`}>
           ปิดสัญญา (มีเล่มต่อ)
@@ -270,14 +264,10 @@ export function DepositHistoryPage() {
         );
       case "REDEEMED":
         return (
-          <span className={`${base} bg-sky-50 text-sky-700`}>
-            ไถ่ถอนแล้ว
-          </span>
+          <span className={`${base} bg-sky-50 text-sky-700`}>ไถ่ถอนแล้ว</span>
         );
       case "FORFEITED":
-        return (
-          <span className={`${base} bg-red-50 text-red-700`}>ตัดหลุด</span>
-        );
+        return <span className={`${base} bg-red-50 text-red-700`}>ตัดหลุด</span>;
       default:
         return (
           <span className={`${base} bg-slate-50 text-slate-600`}>
@@ -321,8 +311,10 @@ export function DepositHistoryPage() {
             placeholder="ค้นหา (เลขที่สัญญา, ชื่อลูกค้า, รุ่น, Serial, กล่องเก็บ)"
             className="w-72 rounded-full border border-slate-300 px-3 py-1.5 text-xs text-slate-700 outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500"
           />
+
+          {/* ✅ FIX: ต้องเป็น /app/... */}
           <Link
-            to="/deposit/list"
+            to="/app/deposit/list"
             className="rounded-full border border-slate-300 px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-50"
           >
             ← กลับหน้ารายการปัจจุบัน
@@ -399,8 +391,9 @@ export function DepositHistoryPage() {
                   {renderNote(c, rolledIds)}
                 </td>
                 <td className="px-4 py-3 text-center align-top">
+                  {/* ✅ FIX: ต้องเป็น /app/... */}
                   <Link
-                    to={`/contracts/${c.id}`}
+                    to={`/app/contracts/${c.id}`}
                     className="rounded-full bg-slate-900 px-3 py-1.5 text-[11px] font-medium text-white hover:bg-slate-800"
                   >
                     รายละเอียด

@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from "react";
 import axios from "axios";
 import { arrayFromApi } from "../../lib/arrayFromApi";
+import { Link } from "react-router-dom";
 
 type Segment = "BUYER" | "CONSIGNOR" | "DEPOSITOR";
 
@@ -50,13 +51,13 @@ export default function CustomersPage() {
         params: query ? { q: query } : undefined,
       });
 
-      // ✅ สำคัญ: normalize response ให้เป็น array เสมอ
+      // ✅ normalize response ให้เป็น array เสมอ
       const list = arrayFromApi<any>(res.data).map(normalizeCustomerRow);
       setRows(list);
     } catch (e: any) {
       console.error(e);
       setErr(e?.response?.data?.message || e?.message || "โหลดข้อมูลลูกค้าไม่สำเร็จ");
-      setRows([]); // กันค้างค่าพัง
+      setRows([]);
     } finally {
       setLoading(false);
     }
@@ -66,20 +67,19 @@ export default function CustomersPage() {
     fetchData("");
   }, []);
 
-  // ✅ guard rows ให้แน่ใจว่าเป็น array เสมอ
   const safeRows = useMemo(() => (Array.isArray(rows) ? rows : []), [rows]);
 
   const counts = useMemo(() => {
     const all = safeRows.length;
-    const buyer = safeRows.filter((r) => (Array.isArray(r.segments) ? r.segments : []).includes("BUYER")).length;
-    const consignor = safeRows.filter((r) => (Array.isArray(r.segments) ? r.segments : []).includes("CONSIGNOR")).length;
-    const depositor = safeRows.filter((r) => (Array.isArray(r.segments) ? r.segments : []).includes("DEPOSITOR")).length;
+    const buyer = safeRows.filter((r) => r.segments.includes("BUYER")).length;
+    const consignor = safeRows.filter((r) => r.segments.includes("CONSIGNOR")).length;
+    const depositor = safeRows.filter((r) => r.segments.includes("DEPOSITOR")).length;
     return { all, buyer, consignor, depositor };
   }, [safeRows]);
 
   const filtered = useMemo(() => {
     if (tab === "ALL") return safeRows;
-    return safeRows.filter((r) => (Array.isArray(r.segments) ? r.segments : []).includes(tab));
+    return safeRows.filter((r) => r.segments.includes(tab));
   }, [safeRows, tab]);
 
   const onSearch = async (e: React.FormEvent) => {
@@ -178,12 +178,12 @@ export default function CustomersPage() {
                       </div>
                     </td>
                     <td className="px-4 py-3">
-                      <a
-                        href={`/customers/${r.id}`}
+                      <Link
+                        to={`/app/customers/${r.id}`}
                         className="rounded bg-slate-900 px-3 py-2 text-xs text-white hover:opacity-90"
                       >
                         ดูรายละเอียด
-                      </a>
+                      </Link>
                     </td>
                   </tr>
                 ))}
