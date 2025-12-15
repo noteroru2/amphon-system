@@ -1,24 +1,24 @@
-const BASE_URL = import.meta.env.VITE_API_BASE_URL?.replace(/\/$/, "");
+// frontend/src/lib/api.ts
+const raw = import.meta.env.VITE_API_BASE_URL;
 
-if (!BASE_URL) {
-  // กันลืมตั้งค่า ENV
-  console.warn("⚠️ VITE_API_BASE_URL is not set");
-}
+// ✅ fallback ให้ dev ใช้ proxy (/api) ได้ ถ้าคุณมีตั้ง proxy ใน vite
+// ✅ production ค่อยตั้ง VITE_API_BASE_URL เป็น https://amphon-backend.onrender.com
+const BASE_URL = (raw ? raw.replace(/\/$/, "") : "/api").replace(/\/$/, "");
 
-export async function apiFetch(path: string, options: RequestInit = {}) {
-  const url = `${BASE_URL}${path.startsWith("/") ? path : `/${path}`}`;
+export async function apiFetch<T = any>(path: string, options: RequestInit = {}): Promise<T> {
+  const p = path.startsWith("/") ? path : `/${path}`;
+  const url = `${BASE_URL}${p}`;
 
   const res = await fetch(url, {
     ...options,
     headers: {
-      "Content-Type": "application/json",
+      ...(options.body ? { "Content-Type": "application/json" } : {}),
       ...(options.headers || {}),
     },
-    // ถ้าคุณใช้ cookie/session ค่อยเปิด credentials
+    // ถ้าใช้ cookie/session ค่อยเปิด
     // credentials: "include",
   });
 
-  // ช่วย debug ตอน API error
   const text = await res.text();
   let data: any;
   try {
@@ -29,11 +29,10 @@ export async function apiFetch(path: string, options: RequestInit = {}) {
 
   if (!res.ok) {
     const msg =
-      typeof data === "object" && data?.message
-        ? data.message
-        : `API Error ${res.status}`;
+      (typeof data === "object" && (data?.message || data?.error)) ||
+      `API Error ${res.status}`;
     throw new Error(msg);
   }
 
-  return data;
+  return data as T;
 }
