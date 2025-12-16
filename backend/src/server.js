@@ -1,6 +1,9 @@
-const express = require("express");
-const cors = require("cors");
-const dotenv = require("dotenv");
+import express from "express";
+import cors from "cors";
+import dotenv from "dotenv";
+
+import contractsRouter from "./routes/contracts.js";
+// import cashbookRouter from "./routes/cashbook.js";
 
 dotenv.config();
 
@@ -9,14 +12,6 @@ const app = express();
 // ====== Basic middleware ======
 app.use(express.json({ limit: "20mb" }));
 app.use(express.urlencoded({ extended: true }));
-
-// (Phase 2 จะปรับ CORS ให้ตรงอีกที)
-// รองรับหลาย origin: ใส่ได้ทั้ง localhost, vercel/netlify domain
-const allowList = (process.env.CORS_ORIGINS || "")
-  .split(",")
-  .map((s) => s.trim())
-  .filter(Boolean);
-
 
 // ===== CORS (Render/Vercel) =====
 const allowList = (process.env.CORS_ORIGINS || "")
@@ -27,12 +22,8 @@ const allowList = (process.env.CORS_ORIGINS || "")
 app.use(
   cors({
     origin: (origin, cb) => {
-      // allow curl/postman/no-origin
-      if (!origin) return cb(null, true);
-
-      // if not set, allow all (dev safe)
-      if (allowList.length === 0) return cb(null, true);
-
+      if (!origin) return cb(null, true); // curl/postman
+      if (allowList.length === 0) return cb(null, true); // ถ้ายังไม่ตั้ง env ให้ปล่อย dev ไปก่อน
       if (allowList.includes(origin)) return cb(null, true);
       return cb(new Error("CORS blocked: " + origin), false);
     },
@@ -42,12 +33,11 @@ app.use(
   })
 );
 
-// ✅ ตอบ preflight
+// ✅ preflight
 app.options("*", cors());
 
-
 // ====== Health Check ======
-app.get("/health", async (req, res) => {
+app.get("/healthz", (req, res) => {
   res.json({
     ok: true,
     service: "AMPHON Backend",
@@ -56,9 +46,16 @@ app.get("/health", async (req, res) => {
   });
 });
 
-// ====== API routes (ค่อยเสียบของคุณตรงนี้) ======
-// app.use("/api/contracts", require("./routes/contracts"));
-// app.use("/api/cashbook", require("./routes/cashbook"));
+// ====== API routes ======
+app.use("/api/contracts", contractsRouter);
+// app.use("/api/cashbook", cashbookRouter);
+
+app.get("/debug/cors", (req, res) => {
+  res.json({
+    origin: req.headers.origin || null,
+    allowList,
+  });
+});
 
 // ====== 404 ======
 app.use((req, res) => {
@@ -77,10 +74,4 @@ app.use((err, req, res, next) => {
 const port = process.env.PORT || 4000;
 app.listen(port, () => {
   console.log(`✅ AMPHON Backend running on port ${port}`);
-});
-app.get("/debug/cors", (req, res) => {
-  res.json({
-    origin: req.headers.origin || null,
-    allowList: (process.env.CORS_ORIGINS || "").split(",").map((s) => s.trim()).filter(Boolean),
-  });
 });
