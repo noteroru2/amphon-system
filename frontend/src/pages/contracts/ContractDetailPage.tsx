@@ -141,14 +141,19 @@ export function ContractDetailPage() {
   const canOperate = contract.status === "ACTIVE";
 
   // ----- รูปภาพทรัพย์สิน (กัน null / string แปลก) -----
-  const images = useMemo(() => {
-    const arr = Array.isArray(contract.images) ? contract.images : [];
-    return arr
+  const images: string[] = Array.isArray(contract?.images)
+  ? contract.images
       .filter((x): x is string => typeof x === "string")
       .map((x) => x.trim())
       .filter((x) => x.length > 0)
-      .filter((x) => x.startsWith("data:image") || x.startsWith("http://") || x.startsWith("https://"));
-  }, [contract.images]);
+      .filter(
+        (x) =>
+          x.startsWith("data:image") ||
+          x.startsWith("http://") ||
+          x.startsWith("https://")
+      )
+  : [];
+
 
   // กันหน้าค้าง: แสดงแค่ 4 รูปก่อน
   const thumbImages = showAllImages ? images : images.slice(0, 4);
