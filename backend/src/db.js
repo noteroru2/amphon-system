@@ -1,24 +1,16 @@
+// backend/src/db.js
+import "dotenv/config";
 import { PrismaClient } from "@prisma/client";
 
-export const prisma = new PrismaClient();
+// ป้องกัน Prisma client ซ้ำใน dev / hot reload
+const globalForPrisma = globalThis;
 
-// backend/src/db.js
-import "dotenv/config";          // ✅ โหลด .env ทันที
+export const prisma =
+  globalForPrisma.prisma ||
+  new PrismaClient({
+    log: ["error", "warn"],
+  });
 
-import pkg from "pg";
-const { Pool } = pkg;
-
-// ลอง log ออกมาดูด้วย (ช่วย debug)
-console.log("DATABASE_URL from env:", process.env.DATABASE_URL);
-
-export const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-});
-
-export async function query(text, params) {
-  return pool.query(text, params);
-}
-
-export async function getClient() {
-  return pool.connect();
+if (process.env.NODE_ENV !== "production") {
+  globalForPrisma.prisma = prisma;
 }
