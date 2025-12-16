@@ -1,10 +1,8 @@
-import React, { useState } from "react";
+import React, { useMemo, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import useSWR from "swr";
-import axios from "axios";
+import { apiFetch } from "../../lib/api";
 import { printContract, printDigitalContract } from "../../utils/printHelpers";
-
-const fetcher = (url: string) => axios.get(url).then((r) => r.data);
 
 type FeeConfig = {
   docFee: number;
@@ -40,46 +38,54 @@ type Contract = {
   startDate?: string;
   dueDate?: string;
   termDays?: number;
+
   principal?: number;
   securityDeposit?: number;
   feeConfig?: FeeConfig;
+
   customer?: Customer | null;
   asset?: Asset;
+
+  // legacy fallback
   itemTitle?: string;
   itemSerial?: string;
   itemCondition?: string;
   itemAccessories?: string;
   storageCode?: string;
+
   images?: string[];
 };
+
+const swrFetcher = (url: string) => apiFetch<any>(url);
 
 export function ContractDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const [previewImage, setPreviewImage] = useState<string | null>(null);
 
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
   const [isEditingCustomer, setIsEditingCustomer] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
+  const [showAllImages, setShowAllImages] = useState(false);
 
+  // ✅ key ต้องเป็น "/contracts/:id" (apiFetch จะต่อกับ BASE_URL ที่ลงท้าย /api)
   const { data, error, mutate } = useSWR<Contract>(
-    id ? `/api/contracts/${id}` : null,
-    fetcher
+    id ? `/contracts/${id}` : null,
+    swrFetcher
   );
 
   if (error) {
     console.error("โหลดรายละเอียดสัญญาผิดพลาด:", error);
     return (
       <div className="p-4 text-center text-xs text-red-500">
-        ไม่สามารถโหลดรายละเอียดสัญญาได้ กรุณาลองใหม่อีกครั้ง
+        ไม่สามารถโหลดรายละเอียดสัญญาได้:{" "}
+        {String((error as any)?.message || error)}
       </div>
     );
   }
 
   if (!data) {
     return (
-      <div className="p-4 text-xs text-slate-500">
-        กำลังโหลดรายละเอียดสัญญา...
-      </div>
+      <div className="p-4 text-xs text-slate-500">กำลังโหลดรายละเอียดสัญญา...</div>
     );
   }
 
@@ -134,10 +140,18 @@ export function ContractDetailPage() {
 
   const canOperate = contract.status === "ACTIVE";
 
-  // ----- รูปภาพทรัพย์สิน -----
-  const images: string[] = Array.isArray(contract.images)
-    ? contract.images.filter((x) => typeof x === "string")
-    : [];
+  // ----- รูปภาพทรัพย์สิน (กัน null / string แปลก) -----
+  const images = useMemo(() => {
+    const arr = Array.isArray(contract.images) ? contract.images : [];
+    return arr
+      .filter((x): x is string => typeof x === "string")
+      .map((x) => x.trim())
+      .filter((x) => x.length > 0)
+      .filter((x) => x.startsWith("data:image") || x.startsWith("http://") || x.startsWith("https://"));
+  }, [contract.images]);
+
+  // กันหน้าค้าง: แสดงแค่ 4 รูปก่อน
+  const thumbImages = showAllImages ? images : images.slice(0, 4);
 
   // ---------- ปุ่ม action ----------
   const handlePrintContract = () => {
@@ -194,28 +208,24 @@ export function ContractDetailPage() {
         lineToken: editingCustomer.lineToken || "",
       };
 
-      const res = await axios.patch(
-        `/api/customers/${contract.customer.id}`,
-        payload
+      // ✅ ใช้ apiFetch ยิงไป backend จริง
+      const updatedCustomer = await apiFetch<Customer>(
+        `/customers/${contract.customer.id}`,
+        { method: "PATCH", body: JSON.stringify(payload) }
       );
 
-      const updatedCustomer: Customer =
-        res.data && res.data.id ? res.data : { ...editingCustomer };
-
-      await mutate(
-        {
-          ...contract,
-          customer: updatedCustomer,
-        },
-        false
-      );
+      // อัปเดต UI โดยไม่ revalidate ทันที
+      await mutate({ ...contract, customer: updatedCustomer }, false);
 
       setIsEditingCustomer(false);
       setEditingCustomer(null);
       alert("บันทึกข้อมูลลูกค้าสำเร็จ");
-    } catch (err) {
-      console.error("PATCH /api/customers error:", err);
-      alert("ไม่สามารถบันทึกข้อมูลลูกค้าได้ กรุณาลองใหม่อีกครั้ง");
+    } catch (err: any) {
+      console.error("PATCH /customers error:", err);
+      alert(
+        err?.message ||
+          "ไม่สามารถบันทึกข้อมูลลูกค้าได้ (อาจยังไม่มี API /customers บน backend)"
+      );
     }
   };
 
@@ -225,7 +235,7 @@ export function ContractDetailPage() {
         {/* Back link */}
         <div className="text-xs">
           <Link
-            to="/deposit/list"
+            to="/app/deposit/list"
             className="inline-flex items-center gap-1 text-slate-500 hover:text-slate-800"
           >
             <span className="text-sm">←</span>
@@ -303,7 +313,7 @@ export function ContractDetailPage() {
             <button
               type="button"
               disabled={!canOperate}
-              onClick={() => navigate(`/contracts/${contract.id}/renew`)}
+              onClick={() => navigate(`/app/contracts/${contract.id}/renew`)}
               className="inline-flex items-center rounded-xl bg-slate-800 px-3 py-2 text-[11px] font-medium text-white hover:bg-slate-900 disabled:opacity-60"
             >
               ต่อสัญญา
@@ -311,7 +321,7 @@ export function ContractDetailPage() {
             <button
               type="button"
               disabled={!canOperate}
-              onClick={() => navigate(`/contracts/${contract.id}/redeem`)}
+              onClick={() => navigate(`/app/contracts/${contract.id}/redeem`)}
               className="inline-flex items-center rounded-xl bg-sky-600 px-3 py-2 text-[11px] font-medium text-white hover:bg-sky-700 disabled:opacity-60"
             >
               ไถ่ถอน
@@ -319,9 +329,7 @@ export function ContractDetailPage() {
             <button
               type="button"
               disabled={!canOperate}
-              onClick={() =>
-                navigate(`/contracts/${contract.id}/cut-principal`)
-              }
+              onClick={() => navigate(`/app/contracts/${contract.id}/cut-principal`)}
               className="inline-flex items-center rounded-xl bg-amber-500 px-3 py-2 text-[11px] font-medium text-white hover:bg-amber-600 disabled:opacity-60"
             >
               ตัดต้น
@@ -329,7 +337,7 @@ export function ContractDetailPage() {
             <button
               type="button"
               disabled={!canOperate}
-              onClick={() => navigate(`/contracts/${contract.id}/forfeit`)}
+              onClick={() => navigate(`/app/contracts/${contract.id}/forfeit`)}
               className="inline-flex items-center rounded-xl bg-red-600 px-3 py-2 text-[11px] font-medium text-white hover:bg-red-700 disabled:opacity-60"
             >
               ตัดหลุด
@@ -357,17 +365,11 @@ export function ContractDetailPage() {
                 />
                 <InfoRow
                   label="สภาพสินค้า"
-                  value={
-                    contract.asset?.condition || contract.itemCondition || "-"
-                  }
+                  value={contract.asset?.condition || contract.itemCondition || "-"}
                 />
                 <InfoRow
                   label="อุปกรณ์"
-                  value={
-                    contract.asset?.accessories ||
-                    contract.itemAccessories ||
-                    "-"
-                  }
+                  value={contract.asset?.accessories || contract.itemAccessories || "-"}
                 />
                 <InfoRow
                   label="กล่องเก็บ"
@@ -381,29 +383,45 @@ export function ContractDetailPage() {
                   <span className="text-[11px] font-medium text-slate-700">
                     รูปภาพทรัพย์สิน
                   </span>
+
                   {images.length > 0 && (
-                    <span className="text-[10px] text-slate-400">
-                      คลิกรูปเพื่อดูขนาดใหญ่
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] text-slate-400">
+                        คลิกรูปเพื่อดูขนาดใหญ่
+                      </span>
+
+                      {images.length > 4 && (
+                        <button
+                          type="button"
+                          onClick={() => setShowAllImages((v) => !v)}
+                          className="rounded-full border border-slate-300 px-2 py-1 text-[10px] text-slate-600 hover:bg-slate-50"
+                        >
+                          {showAllImages ? "ซ่อนรูป" : `ดูทั้งหมด (${images.length})`}
+                        </button>
+                      )}
+                    </div>
                   )}
                 </div>
+
                 {images.length === 0 ? (
                   <div className="rounded-xl border border-dashed border-slate-200 px-3 py-4 text-center text-[11px] text-slate-400">
                     ยังไม่มีรูปภาพที่แนบไว้กับสัญญานี้
                   </div>
                 ) : (
                   <div className="flex flex-wrap gap-3">
-                    {images.map((src, idx) => (
+                    {thumbImages.map((src, idx) => (
                       <button
-                        key={idx}
+                        key={`${idx}-${src.slice(0, 24)}`}
                         type="button"
                         onClick={() => setPreviewImage(src)}
                         className="group relative h-24 w-24 overflow-hidden rounded-xl border border-slate-200"
+                        title="คลิกเพื่อดูรูปใหญ่"
                       >
                         <img
                           src={src}
                           alt={`asset-${idx}`}
                           className="h-full w-full object-cover transition group-hover:scale-105"
+                          loading="lazy"
                         />
                         <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/20 opacity-0 transition group-hover:opacity-100">
                           <span className="rounded-full bg-black/70 px-2 py-0.5 text-[10px] text-white">
@@ -444,6 +462,7 @@ export function ContractDetailPage() {
                       </td>
                       <td className="w-20 px-4 py-3 text-right text-[11px] text-slate-400"></td>
                     </tr>
+
                     {feeConfig.total > 0 && (
                       <tr>
                         <td className="w-32 px-4 py-3 text-[11px] text-slate-400">
@@ -484,9 +503,7 @@ export function ContractDetailPage() {
             {/* Customer info */}
             <section className="rounded-2xl bg-white p-4 shadow-sm">
               <div className="mb-3 flex items-center justify-between gap-2">
-                <h2 className="text-sm font-semibold text-slate-800">
-                  ข้อมูลลูกค้า
-                </h2>
+                <h2 className="text-sm font-semibold text-slate-800">ข้อมูลลูกค้า</h2>
                 {contract.customer && !isEditingCustomer && (
                   <button
                     type="button"
@@ -499,52 +516,38 @@ export function ContractDetailPage() {
               </div>
 
               {!contract.customer ? (
-                <div className="text-xs text-slate-500">
-                  ไม่พบข้อมูลลูกค้าในสัญญานี้
-                </div>
+                <div className="text-xs text-slate-500">ไม่พบข้อมูลลูกค้าในสัญญานี้</div>
               ) : isEditingCustomer && editingCustomer ? (
                 <div className="space-y-3 text-xs">
                   <TextInputSmall
                     label="ชื่อ-นามสกุล"
                     value={editingCustomer.name}
-                    onChange={(v) =>
-                      setEditingCustomer({ ...editingCustomer, name: v })
-                    }
+                    onChange={(v) => setEditingCustomer({ ...editingCustomer, name: v })}
                   />
                   <TextInputSmall
                     label="เบอร์โทรศัพท์"
                     value={editingCustomer.phone || ""}
-                    onChange={(v) =>
-                      setEditingCustomer({ ...editingCustomer, phone: v })
-                    }
+                    onChange={(v) => setEditingCustomer({ ...editingCustomer, phone: v })}
                   />
                   <TextInputSmall
                     label="เลขบัตรประชาชน"
                     value={editingCustomer.idCard || ""}
-                    onChange={(v) =>
-                      setEditingCustomer({ ...editingCustomer, idCard: v })
-                    }
+                    onChange={(v) => setEditingCustomer({ ...editingCustomer, idCard: v })}
                   />
                   <TextInputSmall
                     label="Line ID"
                     value={editingCustomer.lineId || ""}
-                    onChange={(v) =>
-                      setEditingCustomer({ ...editingCustomer, lineId: v })
-                    }
+                    onChange={(v) => setEditingCustomer({ ...editingCustomer, lineId: v })}
                   />
                   <TextAreaSmall
                     label="ที่อยู่"
                     value={editingCustomer.address || ""}
-                    onChange={(v) =>
-                      setEditingCustomer({ ...editingCustomer, address: v })
-                    }
+                    onChange={(v) => setEditingCustomer({ ...editingCustomer, address: v })}
                   />
                   <TextInputSmall
                     label="LINE TOKEN / UID"
                     value={editingCustomer.lineToken || ""}
-                    onChange={(v) =>
-                      setEditingCustomer({ ...editingCustomer, lineToken: v })
-                    }
+                    onChange={(v) => setEditingCustomer({ ...editingCustomer, lineToken: v })}
                   />
 
                   <div className="mt-3 flex justify-end gap-2">
@@ -569,27 +572,19 @@ export function ContractDetailPage() {
                   <div className="font-semibold text-slate-900">
                     {contract.customer.name || "-"}
                   </div>
-                  <div className="text-slate-600">
-                    {contract.customer.phone || "-"}
-                  </div>
+                  <div className="text-slate-600">{contract.customer.phone || "-"}</div>
 
                   <div className="mt-3 space-y-1 text-[11px] text-slate-600">
                     <div>
-                      <span className="font-medium text-slate-500">
-                        บัตร ปชช.:
-                      </span>{" "}
+                      <span className="font-medium text-slate-500">บัตร ปชช.:</span>{" "}
                       {contract.customer.idCard || "-"}
                     </div>
                     <div>
-                      <span className="font-medium text-slate-500">
-                        Line ID:
-                      </span>{" "}
+                      <span className="font-medium text-slate-500">Line ID:</span>{" "}
                       {contract.customer.lineId || "-"}
                     </div>
                     <div className="mt-2 whitespace-pre-wrap">
-                      <span className="font-medium text-slate-500">
-                        ที่อยู่:
-                      </span>{" "}
+                      <span className="font-medium text-slate-500">ที่อยู่:</span>{" "}
                       {contract.customer.address || "-"}
                     </div>
                   </div>
@@ -599,15 +594,11 @@ export function ContractDetailPage() {
 
             {/* Balance card */}
             <section className="rounded-2xl bg-slate-900 p-4 text-slate-50 shadow-lg">
-              <h2 className="mb-3 text-sm font-semibold">
-                ยอดคงเหลือ (BALANCE)
-              </h2>
+              <h2 className="mb-3 text-sm font-semibold">ยอดคงเหลือ (BALANCE)</h2>
               <div className="space-y-2 text-xs">
                 <div className="flex justify-between">
                   <span className="text-slate-300">เงินต้น (Principal)</span>
-                  <span className="font-semibold">
-                    {principal.toLocaleString()}
-                  </span>
+                  <span className="font-semibold">{principal.toLocaleString()}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-slate-300">ค่าบริการรอบนี้</span>
@@ -616,9 +607,7 @@ export function ContractDetailPage() {
               </div>
 
               <div className="mt-4 border-t border-slate-700 pt-3">
-                <div className="text-[11px] text-slate-300">
-                  ยอดไถ่ถอนรวมที่ต้องชำระ
-                </div>
+                <div className="text-[11px] text-slate-300">ยอดไถ่ถอนรวมที่ต้องชำระ</div>
                 <div className="text-3xl font-semibold text-emerald-400">
                   {totalRedemption.toLocaleString()}
                 </div>
@@ -634,10 +623,7 @@ export function ContractDetailPage() {
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
           onClick={() => setPreviewImage(null)}
         >
-          <div
-            className="relative max-h-full max-w-full"
-            onClick={(e) => e.stopPropagation()}
-          >
+          <div className="relative max-h-full max-w-full" onClick={(e) => e.stopPropagation()}>
             <img
               src={previewImage}
               alt="preview"
