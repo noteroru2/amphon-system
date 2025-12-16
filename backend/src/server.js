@@ -6,14 +6,11 @@ import contractsRouter from "./routes/contracts.js";
 // import cashbookRouter from "./routes/cashbook.js";
 
 dotenv.config();
-
 const app = express();
 
-// ====== Basic middleware ======
 app.use(express.json({ limit: "20mb" }));
 app.use(express.urlencoded({ extended: true }));
 
-// ===== CORS (Render/Vercel) =====
 const allowList = (process.env.CORS_ORIGINS || "")
   .split(",")
   .map((s) => s.trim())
@@ -22,8 +19,8 @@ const allowList = (process.env.CORS_ORIGINS || "")
 app.use(
   cors({
     origin: (origin, cb) => {
-      if (!origin) return cb(null, true); // curl/postman
-      if (allowList.length === 0) return cb(null, true); // ถ้ายังไม่ตั้ง env ให้ปล่อย dev ไปก่อน
+      if (!origin) return cb(null, true);
+      if (allowList.length === 0) return cb(null, true);
       if (allowList.includes(origin)) return cb(null, true);
       return cb(new Error("CORS blocked: " + origin), false);
     },
@@ -33,22 +30,11 @@ app.use(
   })
 );
 
-// ✅ preflight
 app.options("*", cors());
 
-// ====== Health Check ======
 app.get("/healthz", (req, res) => {
-  res.json({
-    ok: true,
-    service: "AMPHON Backend",
-    time: new Date().toISOString(),
-    env: process.env.NODE_ENV || "unknown",
-  });
+  res.json({ ok: true, time: new Date().toISOString() });
 });
-
-// ====== API routes ======
-app.use("/api/contracts", contractsRouter);
-// app.use("/api/cashbook", cashbookRouter);
 
 app.get("/debug/cors", (req, res) => {
   res.json({
@@ -57,21 +43,18 @@ app.get("/debug/cors", (req, res) => {
   });
 });
 
-// ====== 404 ======
+// ✅ สำคัญ: ต้อง mount ให้ตรงกับ frontend ที่ยิง /api/...
+app.use("/api/contracts", contractsRouter);
+// app.use("/api/cashbook", cashbookRouter);
+
 app.use((req, res) => {
   res.status(404).json({ ok: false, message: "Not Found", path: req.path });
 });
 
-// ====== Error handler ======
 app.use((err, req, res, next) => {
   console.error("API_ERROR:", err);
-  res.status(500).json({
-    ok: false,
-    message: err?.message || "Internal Server Error",
-  });
+  res.status(500).json({ ok: false, message: err?.message || "Internal Server Error" });
 });
 
 const port = process.env.PORT || 4000;
-app.listen(port, () => {
-  console.log(`✅ AMPHON Backend running on port ${port}`);
-});
+app.listen(port, () => console.log("✅ Backend running on port", port));
