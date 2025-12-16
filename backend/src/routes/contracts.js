@@ -328,32 +328,74 @@ router.get("/", async (req, res) => {
 /**
  * GET /api/contracts/:id  -> ใช้หน้า ContractDetailPage + หน้า operation ทั้งหมด
  */
+// GET /api/contracts/:id
 router.get("/:id", async (req, res) => {
   try {
     const id = Number(req.params.id);
-    if (!id || Number.isNaN(id)) {
-      return res.status(400).json({ message: "id ไม่ถูกต้อง" });
+    if (!Number.isFinite(id)) {
+      return res.status(400).json({ message: "invalid id" });
     }
 
     const contract = await prisma.contract.findUnique({
-  where: { id },
-  include: { customer: true, images: true, actionLogs: true,   },
-      
+      where: { id },
+      include: {
+        customer: true,
+        images: true,
+      },
     });
 
     if (!contract) {
       return res.status(404).json({ message: "ไม่พบสัญญา" });
     }
 
-    return res.json(mapContractToResponse(contract));
-  } catch (err) {
-    console.error("GET /api/contracts/:id error:", err);
-    return res.status(500).json({
-      message: "ไม่สามารถดึงข้อมูลสัญญาได้",
-      error: String(err),
+    // 🔥 normalize ให้ frontend ใช้ได้ตรง ๆ
+    res.json({
+      id: contract.id,
+      code: contract.code,
+      type: contract.type,
+      status: contract.status,
+      createdAt: contract.createdAt,
+      startDate: contract.startDate,
+      dueDate: contract.dueDate,
+
+      principal: Number(contract.principal || 0),
+      termDays: contract.termDays,
+
+      feeConfig: contract.feeBreakdown || {
+        docFee: 0,
+        storageFee: 0,
+        careFee: 0,
+        total: 0,
+      },
+
+      customer: contract.customer
+        ? {
+            id: contract.customer.id,
+            name: contract.customer.name,
+            phone: contract.customer.phone,
+            idCard: contract.customer.idCard,
+            address: contract.customer.address,
+            lineId: contract.customer.lineId,
+            lineToken: contract.customer.lineToken,
+          }
+        : null,
+
+      asset: {
+        modelName: contract.itemTitle,
+        serial: contract.itemSerial,
+        condition: contract.itemCondition,
+        accessories: contract.itemAccessories,
+        storageCode: contract.storageCode,
+      },
+
+      images: (contract.images || []).map((img) => img.url),
     });
+  } catch (err) {
+    console.error("GET /api/contracts/:id error", err);
+    res.status(500).json({ message: "Internal Server Error" });
   }
 });
+
 
 /**
  * POST /api/contracts  -> สร้างสัญญาใหม่ (หน้า NewDepositPage)
