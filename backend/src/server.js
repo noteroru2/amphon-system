@@ -1,11 +1,10 @@
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
-
 import contractsRouter from "./routes/contracts.js";
-// import cashbookRouter from "./routes/cashbook.js";
 
 dotenv.config();
+
 const app = express();
 
 app.use(express.json({ limit: "20mb" }));
@@ -30,6 +29,7 @@ app.use(
   })
 );
 
+// ⭐ สำคัญมาก (แก้ 405)
 app.options("*", cors());
 
 app.get("/healthz", (req, res) => {
@@ -37,15 +37,11 @@ app.get("/healthz", (req, res) => {
 });
 
 app.get("/debug/cors", (req, res) => {
-  res.json({
-    origin: req.headers.origin || null,
-    allowList,
-  });
+  res.json({ origin: req.headers.origin || null, allowList });
 });
 
-// ✅ สำคัญ: ต้อง mount ให้ตรงกับ frontend ที่ยิง /api/...
+// ⭐ mount API
 app.use("/api/contracts", contractsRouter);
-// app.use("/api/cashbook", cashbookRouter);
 
 app.use((req, res) => {
   res.status(404).json({ ok: false, message: "Not Found", path: req.path });
@@ -53,8 +49,10 @@ app.use((req, res) => {
 
 app.use((err, req, res, next) => {
   console.error("API_ERROR:", err);
-  res.status(500).json({ ok: false, message: err?.message || "Internal Server Error" });
+  res.status(500).json({ ok: false, message: err.message || "Server error" });
 });
 
-const port = process.env.PORT || 4000;
-app.listen(port, () => console.log("✅ Backend running on port", port));
+const port = process.env.PORT || 10000;
+app.listen(port, () =>
+  console.log("✅ Backend running on port", port)
+);
