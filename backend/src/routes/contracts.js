@@ -143,8 +143,11 @@ function mapContractToResponse(contract) {
   const storageCode = contract.storageCode || "";
 
   const imagesArr = Array.isArray(contract.images)
-    ? contract.images.map((img) => img.urlOrData)
-    : [];
+  ? contract.images
+      .map((img) => img?.urlOrData || null)
+      .filter(Boolean)
+  : [];
+
 
   const logsArr = Array.isArray(contract.actionLogs)
     ? contract.actionLogs
@@ -173,7 +176,8 @@ function mapContractToResponse(contract) {
     // ===== money =====
     principal,
     securityDeposit: principal,
-    feeConfig: contract.feeConfig || null,
+   feeConfig: normalizeFeeConfig(contract.feeConfig),
+
 
     // ===== customer =====
     customer: contract.customer
@@ -341,6 +345,8 @@ router.get("/:id", async (req, res) => {
       include: {
         customer: true,
         images: true,
+        actionLogs: true,
+        cashbookEntries: true,
       },
     });
 
@@ -348,53 +354,13 @@ router.get("/:id", async (req, res) => {
       return res.status(404).json({ message: "ไม่พบสัญญา" });
     }
 
-    // 🔥 normalize ให้ frontend ใช้ได้ตรง ๆ
-    res.json({
-      id: contract.id,
-      code: contract.code,
-      type: contract.type,
-      status: contract.status,
-      createdAt: contract.createdAt,
-      startDate: contract.startDate,
-      dueDate: contract.dueDate,
-
-      principal: Number(contract.principal || 0),
-      termDays: contract.termDays,
-
-      feeConfig: contract.feeBreakdown || {
-        docFee: 0,
-        storageFee: 0,
-        careFee: 0,
-        total: 0,
-      },
-
-      customer: contract.customer
-        ? {
-            id: contract.customer.id,
-            name: contract.customer.name,
-            phone: contract.customer.phone,
-            idCard: contract.customer.idCard,
-            address: contract.customer.address,
-            lineId: contract.customer.lineId,
-            lineToken: contract.customer.lineToken,
-          }
-        : null,
-
-      asset: {
-        modelName: contract.itemTitle,
-        serial: contract.itemSerial,
-        condition: contract.itemCondition,
-        accessories: contract.itemAccessories,
-        storageCode: contract.storageCode,
-      },
-
-      images: (contract.images || []).map((img) => img.url),
-    });
+    return res.json(mapContractToResponse(contract));
   } catch (err) {
     console.error("GET /api/contracts/:id error", err);
-    res.status(500).json({ message: "Internal Server Error" });
+    return res.status(500).json({ message: "Internal Server Error" });
   }
 });
+
 
 
 /**
