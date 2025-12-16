@@ -136,28 +136,46 @@ function mapContractToResponse(contract) {
       ? contract.securityDeposit
       : 0;
 
+  const assetModel = contract.assetModel || contract.itemTitle || "";
+  const assetSerial = contract.assetSerial || contract.itemSerial || "";
+  const assetCondition = contract.assetCondition || contract.itemCondition || "";
+  const assetAccessories = contract.assetAccessories || contract.itemAccessories || "";
+  const storageCode = contract.storageCode || "";
+
+  const imagesArr = Array.isArray(contract.images)
+    ? contract.images.map((img) => img.urlOrData)
+    : [];
+
+  const logsArr = Array.isArray(contract.actionLogs)
+    ? contract.actionLogs
+        .map((log) => ({
+          id: log.id,
+          action: log.action,
+          amount: log.amount,
+          createdAt: log.createdAt,
+        }))
+        .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+    : [];
+
   return {
+    // ===== core =====
     id: contract.id,
     code: contract.code,
     type: contract.type,
     status: contract.status,
-
     createdAt: contract.createdAt,
     updatedAt: contract.updatedAt,
     startDate: contract.startDate,
     dueDate: contract.dueDate,
     termDays: contract.termDays,
-
     previousContractId: contract.previousContractId ?? null,
 
-    // เงินต้น
+    // ===== money =====
     principal,
     securityDeposit: principal,
-
-    // ค่าธรรมเนียมรอบล่าสุด
     feeConfig: contract.feeConfig || null,
 
-    // ข้อมูลลูกค้า
+    // ===== customer =====
     customer: contract.customer
       ? {
           id: contract.customer.id,
@@ -170,38 +188,34 @@ function mapContractToResponse(contract) {
         }
       : null,
 
-    // ข้อมูลทรัพย์สิน
+    // ===== NEW shape (ที่คุณใช้อยู่ตอนนี้) =====
     asset: {
-      modelName: contract.assetModel || contract.itemTitle || "",
-      serial: contract.assetSerial || contract.itemSerial || "",
-      condition: contract.assetCondition || contract.itemCondition || "",
-      accessories:
-        contract.assetAccessories || contract.itemAccessories || "",
-      storageCode: contract.storageCode || "",
+      modelName: assetModel,
+      serial: assetSerial,
+      condition: assetCondition,
+      accessories: assetAccessories,
+      storageCode,
     },
 
-    // รูปภาพ (ถ้ามี)
-   images: Array.isArray(contract.images)
-      ? contract.images.map((img) => img.urlOrData)
-      : [],
+    // ===== OLD/LEGACY fields (กันหน้า detail เก่าพัง) =====
+    assetModel,
+    assetSerial,
+    assetCondition,
+    assetAccessories,
+    storageCode,
 
-    // LOG การทำรายการ
-    logs: Array.isArray(contract.actionLogs)
-      ? contract.actionLogs
-          .map((log) => ({
-            id: log.id,
-            action: log.action,
-            amount: log.amount,
-            createdAt: log.createdAt,
-          }))
-          .sort(
-            (a, b) =>
-              new Date(a.createdAt).getTime() -
-              new Date(b.createdAt).getTime()
-          )
-      : [],
+    // บางหน้าเก่าใช้ itemTitle/itemSerial
+    itemTitle: assetModel,
+    itemSerial: assetSerial,
+    itemCondition: assetCondition,
+    itemAccessories: assetAccessories,
+
+    // ===== images/logs =====
+    images: imagesArr,
+    logs: logsArr,
   };
 }
+
 
 
 
