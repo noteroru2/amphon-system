@@ -70,9 +70,7 @@ const InventoryPage: React.FC = () => {
       // ✅ ยิงไป backend render ตรง ๆ (กันไปโดเมน vercel เอง)
       // ✅ ใส่ t= กัน cache 304
       const url = `${API_BASE}/api/inventory?t=${Date.now()}`;
-      const res = await axios.get(url, {
-        headers: { "Cache-Control": "no-cache" },
-      });
+      const res = await axios.get(url,);
 
       const list = arrayFromApi<InventoryItemRow>(res.data);
       setItems(Array.isArray(list) ? list : []);
