@@ -7,8 +7,22 @@ const router = express.Router();
 // -------- helpers --------
 const toNumber = (v) => {
   if (v === null || v === undefined) return 0;
-  const n = Number(v); // Prisma Decimal -> number ได้ถ้าเป็น string/Decimal-like
+  if (typeof v === "object" && typeof v.toNumber === "function") return v.toNumber();
+  const n = Number(v);
   return Number.isFinite(n) ? n : 0;
+};
+
+// ✅ available fallback:
+// - ถ้ามี quantityAvailable ใช้ค่านั้น
+// - ถ้าไม่มี/เป็น null ให้ใช้ quantity - quantitySold
+const getAvailable = (item) => {
+  const qa = item?.quantityAvailable;
+  if (qa !== null && qa !== undefined && Number.isFinite(Number(qa))) {
+    return Math.max(Number(qa), 0);
+  }
+  const q = Number(item?.quantity ?? 0);
+  const sold = Number(item?.quantitySold ?? 0);
+  return Math.max(q - sold, 0);
 };
 
 // status rule:
@@ -16,7 +30,7 @@ const toNumber = (v) => {
 // - ถ้า status มีอยู่แล้ว (เช่น RESERVED) ให้คงไว้
 // - default => IN_STOCK
 const normalizeStatus = (item) => {
-  const available = Number(item.quantityAvailable ?? 0);
+  const available = getAvailable(item);
   if (available <= 0) return "SOLD";
   return item.status || "IN_STOCK";
 };
@@ -47,25 +61,28 @@ router.get("/", async (req, res) => {
       },
     });
 
-    const result = (items || []).map((it) => ({
-      id: it.id,
-      code: it.code,
-      name: it.name,
-      serial: it.serial,
-      status: normalizeStatus(it),
-      sourceType: it.sourceType || "-",
-      storageLocation: it.storageLocation || null,
+    const result = (items || []).map((it) => {
+      const available = getAvailable(it);
+      return {
+        id: it.id,
+        code: it.code,
+        name: it.name,
+        serial: it.serial,
+        status: normalizeStatus({ ...it, quantityAvailable: available }),
+        sourceType: it.sourceType || "-",
+        storageLocation: it.storageLocation || null,
 
-      cost: toNumber(it.cost),
-      targetPrice: toNumber(it.targetPrice),
-      sellingPrice: toNumber(it.sellingPrice),
+        cost: toNumber(it.cost),
+        targetPrice: toNumber(it.targetPrice),
+        sellingPrice: toNumber(it.sellingPrice),
 
-      quantity: Number(it.quantity ?? 1),
-      quantityAvailable: Number(it.quantityAvailable ?? 0),
-      quantitySold: Number(it.quantitySold ?? 0),
+        quantity: Number(it.quantity ?? 1),
+        quantityAvailable: Number(available),
+        quantitySold: Number(it.quantitySold ?? 0),
 
-      createdAt: it.createdAt,
-    }));
+        createdAt: it.createdAt,
+      };
+    });
 
     res.json(result);
   } catch (err) {
@@ -116,13 +133,15 @@ router.get("/:id", async (req, res) => {
 
     if (!it) return res.status(404).json({ message: "ไม่พบสินค้า" });
 
+    const available = getAvailable(it);
+
     res.json({
       id: it.id,
       code: it.code,
       name: it.name,
-      title: it.name, // เผื่อบางหน้า/printHelpers ยังอ้าง title
+      title: it.name,
       serial: it.serial,
-      status: normalizeStatus(it),
+      status: normalizeStatus({ ...it, quantityAvailable: available }),
       sourceType: it.sourceType || "-",
       storageLocation: it.storageLocation || null,
 
@@ -131,7 +150,7 @@ router.get("/:id", async (req, res) => {
       sellingPrice: toNumber(it.sellingPrice),
 
       quantity: Number(it.quantity ?? 1),
-      quantityAvailable: Number(it.quantityAvailable ?? 0),
+      quantityAvailable: Number(available),
       quantitySold: Number(it.quantitySold ?? 0),
 
       buyerName: it.buyerName || null,
@@ -161,14 +180,8 @@ router.post("/:id/sell", async (req, res) => {
     const id = Number(req.params.id);
     if (!Number.isFinite(id)) return res.status(400).json({ message: "id ไม่ถูกต้อง" });
 
-    const {
-      sellingPrice,
-      quantity = 1,
-      buyerName,
-      buyerPhone,
-      buyerAddress,
-      buyerTaxId,
-    } = req.body || {};
+    const { sellingPrice, quantity = 1, buyerName, buyerPhone, buyerAddress, buyerTaxId } =
+      req.body || {};
 
     const qty = Number(quantity ?? 1);
     const price = Number(sellingPrice ?? 0);
@@ -207,7 +220,7 @@ router.post("/:id/sell", async (req, res) => {
         throw e;
       }
 
-      const available = Number(item.quantityAvailable ?? 0);
+      const available = getAvailable(item);
       const sold = Number(item.quantitySold ?? 0);
 
       if (available <= 0 || item.status === "SOLD") {
@@ -226,20 +239,17 @@ router.post("/:id/sell", async (req, res) => {
       const newAvailable = available - qty;
       const newSold = sold + qty;
 
-      const nextStatus = newAvailable === 0 ? "SOLD" : (item.status || "IN_STOCK");
+      const nextStatus = newAvailable === 0 ? "SOLD" : item.status || "IN_STOCK";
 
-      // ✅ ต้นทุนต่อหน่วย:
-      // - ถ้า quantity > 1 และ cost ดูเหมือนเป็นต้นทุนรวม → เฉลี่ยต่อหน่วย
-      // - ถ้า quantity = 1 → cost เป็นต่อชิ้นอยู่แล้ว
+      // ต้นทุนต่อหน่วย
       const totalQty = Math.max(Number(item.quantity ?? 1), 1);
       const totalCost = toNumber(item.cost);
-      const unitCost =
-        totalQty > 1 && totalCost > 0 ? totalCost / totalQty : totalCost;
+      const unitCost = totalQty > 1 && totalCost > 0 ? totalCost / totalQty : totalCost;
 
-      // ✅ กำไรของการขายครั้งนี้ (ต่อหน่วย)
+      // กำไรของการขายครั้งนี้
       const profitThisSale = (price - unitCost) * qty;
 
-      // ✅ สะสมกำไร (อย่าเขียนทับ)
+      // สะสมกำไร
       const prevGross = toNumber(item.grossProfit);
       const prevNet = toNumber(item.netProfit);
       const grossProfitTotal = prevGross + profitThisSale;
@@ -249,6 +259,8 @@ router.post("/:id/sell", async (req, res) => {
         where: { id },
         data: {
           sellingPrice: price,
+
+          // ✅ เซ็ต quantityAvailable ให้เป็น “ค่าจริง” เสมอ (แม้เดิมเป็น null)
           quantityAvailable: newAvailable,
           quantitySold: newSold,
           status: nextStatus,
@@ -263,7 +275,6 @@ router.post("/:id/sell", async (req, res) => {
         },
       });
 
-      // ลง cashbook: รายได้จากการขายสินค้า
       await tx.cashbookEntry.create({
         data: {
           type: "IN",
@@ -278,13 +289,15 @@ router.post("/:id/sell", async (req, res) => {
       return updated;
     });
 
+    const availableAfter = getAvailable(result);
+
     res.json({
       id: result.id,
       code: result.code,
       name: result.name,
       title: result.name,
       serial: result.serial,
-      status: normalizeStatus(result),
+      status: normalizeStatus({ ...result, quantityAvailable: availableAfter }),
       sourceType: result.sourceType || "-",
 
       cost: toNumber(result.cost),
@@ -292,7 +305,7 @@ router.post("/:id/sell", async (req, res) => {
       sellingPrice: toNumber(result.sellingPrice),
 
       quantity: Number(result.quantity ?? 1),
-      quantityAvailable: Number(result.quantityAvailable ?? 0),
+      quantityAvailable: Number(availableAfter),
       quantitySold: Number(result.quantitySold ?? 0),
 
       buyerName: result.buyerName || null,
