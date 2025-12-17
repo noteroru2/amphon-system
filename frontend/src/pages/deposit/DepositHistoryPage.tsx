@@ -1,10 +1,8 @@
 // src/pages/deposit/DepositHistoryPage.tsx
-import React, { useState, useMemo } from "react";
+import React, { useMemo, useState } from "react";
 import useSWR from "swr";
-import axios from "axios";
 import { Link } from "react-router-dom";
-
-const fetcher = (url: string) => axios.get(url).then((r) => r.data);
+import { apiFetch } from "../../lib/api";
 
 type ContractStatus =
   | "ACTIVE"
@@ -42,9 +40,22 @@ type Contract = {
   dueDate?: string;
   updatedAt?: string;
   previousContractId?: number | null;
-  customer?: Customer;
-  asset?: Asset;
-  principal: number;
+
+  customer?: Customer | null;
+
+  // new shape
+  asset?: Asset | null;
+
+  // legacy fallback
+  itemTitle?: string;
+  itemSerial?: string;
+  itemCondition?: string;
+  itemAccessories?: string;
+  storageCode?: string;
+
+  principal?: number;
+  securityDeposit?: number;
+
   type?: string;
   logs?: ContractActionLog[];
 };
@@ -54,25 +65,28 @@ type MonthOption = {
   label: string;
 };
 
+const swrFetcher = (url: string) => apiFetch<any>(url);
+
 export function DepositHistoryPage() {
-  const { data, error } = useSWR<any>("/api/contracts", fetcher);
+  // ✅ ใช้ apiFetch + "/contracts" (ไม่ใช่ "/api/contracts")
+  const { data, error } = useSWR<any>("/contracts", swrFetcher);
+
   const [search, setSearch] = useState("");
   const [selectedMonth, setSelectedMonth] = useState<string>("all");
 
-  // ✅ ทำให้ data กลายเป็น array เสมอ (กัน API ส่งรูปแบบอื่น)
+  // ✅ ทำให้ data กลายเป็น array เสมอ
   const contracts = useMemo<Contract[]>(() => {
     const payload = data;
 
-    const list: Contract[] =
-      Array.isArray(payload)
-        ? payload
-        : Array.isArray(payload?.items)
-        ? payload.items
-        : Array.isArray(payload?.data)
-        ? payload.data
-        : Array.isArray(payload?.contracts)
-        ? payload.contracts
-        : [];
+    const list: Contract[] = Array.isArray(payload)
+      ? payload
+      : Array.isArray(payload?.items)
+      ? payload.items
+      : Array.isArray(payload?.data)
+      ? payload.data
+      : Array.isArray(payload?.contracts)
+      ? payload.contracts
+      : [];
 
     return list;
   }, [data]);
@@ -118,7 +132,7 @@ export function DepositHistoryPage() {
     console.error("Error loading deposit history:", error);
     return (
       <div className="p-4 text-center text-xs text-red-500">
-        ไม่สามารถโหลดประวัติสัญญาได้ กรุณาลองใหม่อีกครั้ง
+        ไม่สามารถโหลดประวัติสัญญาได้: {String((error as any)?.message || error)}
       </div>
     );
   }
@@ -140,24 +154,31 @@ export function DepositHistoryPage() {
     });
   };
 
+  const getPrincipal = (c: Contract) => {
+    if (typeof c.principal === "number") return c.principal;
+    if (typeof c.securityDeposit === "number") return c.securityDeposit;
+    return 0;
+  };
+
+  const getAssetModel = (c: Contract) => c.asset?.modelName || c.itemTitle || "-";
+  const getAssetSerial = (c: Contract) => c.asset?.serial || c.itemSerial || "-";
+  const getStorageCode = (c: Contract) => c.asset?.storageCode || c.storageCode || "-";
+
   // --- หมายเหตุ ---
   const renderNote = (c: Contract, rolledIdsSet: Set<number>): string => {
     const logs = Array.isArray(c.logs) ? c.logs : [];
-    const sortedLogs = logs.slice().sort((a, b) =>
-      a.createdAt < b.createdAt ? -1 : 1
-    );
+    const sortedLogs = logs
+      .slice()
+      .sort((a, b) => (a.createdAt < b.createdAt ? -1 : 1));
     const latest = sortedLogs[sortedLogs.length - 1];
 
-    const formatAmount = (amt: number) =>
-      amt ? `${amt.toLocaleString()} บาท` : "";
+    const formatAmount = (amt: number) => (amt ? `${amt.toLocaleString()} บาท` : "");
 
     const isRolledSource = rolledIdsSet.has(c.id);
 
     // 1) สัญญาเดิมที่ถูกต่อเล่มใหม่
     if (isRolledSource) {
-      return `ปิดสัญญา (มีเล่มใหม่) วันที่ ${formatDate(
-        c.updatedAt || c.createdAt
-      )}`;
+      return `ปิดสัญญา (มีเล่มใหม่) วันที่ ${formatDate(c.updatedAt || c.createdAt)}`;
     }
 
     if (!sortedLogs.length) {
@@ -174,38 +195,25 @@ export function DepositHistoryPage() {
     }
 
     // 2) หา log ตัดต้นล่าสุด (ถ้ามี)
-    const latestCut = [...sortedLogs]
-      .reverse()
-      .find((l) => l.action === "CUT_PRINCIPAL");
-
+    const latestCut = [...sortedLogs].reverse().find((l) => l.action === "CUT_PRINCIPAL");
     if (latestCut && c.status === "ACTIVE" && !c.previousContractId) {
-      return `ปรับวงเงิน (ตัดต้น) ${formatAmount(
-        latestCut.amount
-      )} ล่าสุด วันที่ ${formatDate(latestCut.createdAt)}`;
+      return `ปรับวงเงิน (ตัดต้น) ${formatAmount(latestCut.amount)} ล่าสุด วันที่ ${formatDate(
+        latestCut.createdAt
+      )}`;
     }
 
     // 3) แปล action จาก log ล่าสุด
     switch (latest.action) {
       case "NEW_CONTRACT":
-        return `ทำสัญญาใหม่ ต้น ${formatAmount(latest.amount)} วันที่ ${formatDate(
-          latest.createdAt
-        )}`;
+        return `ทำสัญญาใหม่ ต้น ${formatAmount(latest.amount)} วันที่ ${formatDate(latest.createdAt)}`;
       case "RENEW_CONTRACT":
-        return `ต่อสัญญาใหม่ ต้น ${formatAmount(latest.amount)} วันที่ ${formatDate(
-          latest.createdAt
-        )}`;
+        return `ต่อสัญญาใหม่ ต้น ${formatAmount(latest.amount)} วันที่ ${formatDate(latest.createdAt)}`;
       case "REDEEM":
-        return `ไถ่ถอน ${formatAmount(latest.amount)} วันที่ ${formatDate(
-          latest.createdAt
-        )}`;
+        return `ไถ่ถอน ${formatAmount(latest.amount)} วันที่ ${formatDate(latest.createdAt)}`;
       case "FORFEIT":
-        return `ตัดหลุด ${formatAmount(latest.amount)} วันที่ ${formatDate(
-          latest.createdAt
-        )}`;
+        return `ตัดหลุด ${formatAmount(latest.amount)} วันที่ ${formatDate(latest.createdAt)}`;
       case "CUT_PRINCIPAL":
-        return `ปรับวงเงิน (ตัดต้น) ${formatAmount(latest.amount)} วันที่ ${formatDate(
-          latest.createdAt
-        )}`;
+        return `ปรับวงเงิน (ตัดต้น) ${formatAmount(latest.amount)} วันที่ ${formatDate(latest.createdAt)}`;
       default:
         return "";
     }
@@ -215,25 +223,29 @@ export function DepositHistoryPage() {
   const filtered = contracts
     .filter((c) => !c.type || c.type === "DEPOSIT")
     .filter((c) => {
-      if (!search.trim()) return true;
       const q = search.trim().toLowerCase();
+      if (!q) return true;
+
       return (
         (c.code || "").toLowerCase().includes(q) ||
         (c.customer?.name || "").toLowerCase().includes(q) ||
-        (c.asset?.modelName || "").toLowerCase().includes(q) ||
-        (c.asset?.serial || "").toLowerCase().includes(q) ||
-        (c.asset?.storageCode || "").toLowerCase().includes(q)
+        getAssetModel(c).toLowerCase().includes(q) ||
+        getAssetSerial(c).toLowerCase().includes(q) ||
+        getStorageCode(c).toLowerCase().includes(q)
       );
     })
     .filter((c) => {
       if (selectedMonth === "all") return true;
       if (!c.createdAt) return false;
+
       const d = new Date(c.createdAt);
       if (Number.isNaN(d.getTime())) return false;
+
       const key =
         d.getFullYear().toString() +
         "-" +
         String(d.getMonth() + 1).padStart(2, "0");
+
       return key === selectedMonth;
     })
     .sort((a, b) => {
@@ -243,37 +255,22 @@ export function DepositHistoryPage() {
     });
 
   const renderStatus = (c: Contract) => {
-    const base =
-      "inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium";
+    const base = "inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium";
     const isRolledSource = rolledIds.has(c.id);
 
     if (isRolledSource) {
-      return (
-        <span className={`${base} bg-amber-50 text-amber-700`}>
-          ปิดสัญญา (มีเล่มต่อ)
-        </span>
-      );
+      return <span className={`${base} bg-amber-50 text-amber-700`}>ปิดสัญญา (มีเล่มต่อ)</span>;
     }
 
     switch (c.status) {
       case "ACTIVE":
-        return (
-          <span className={`${base} bg-emerald-50 text-emerald-700`}>
-            กำลังดำเนินการ
-          </span>
-        );
+        return <span className={`${base} bg-emerald-50 text-emerald-700`}>กำลังดำเนินการ</span>;
       case "REDEEMED":
-        return (
-          <span className={`${base} bg-sky-50 text-sky-700`}>ไถ่ถอนแล้ว</span>
-        );
+        return <span className={`${base} bg-sky-50 text-sky-700`}>ไถ่ถอนแล้ว</span>;
       case "FORFEITED":
         return <span className={`${base} bg-red-50 text-red-700`}>ตัดหลุด</span>;
       default:
-        return (
-          <span className={`${base} bg-slate-50 text-slate-600`}>
-            {c.status || "-"}
-          </span>
-        );
+        return <span className={`${base} bg-slate-50 text-slate-600`}>{c.status || "-"}</span>;
     }
   };
 
@@ -281,12 +278,9 @@ export function DepositHistoryPage() {
     <div className="space-y-4">
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h1 className="text-lg font-semibold text-slate-900">
-            ประวัติสัญญาฝากดูแลทั้งหมด
-          </h1>
+          <h1 className="text-lg font-semibold text-slate-900">ประวัติสัญญาฝากดูแลทั้งหมด</h1>
           <p className="text-xs text-slate-500">
-            แสดงรายการสัญญาใหม่ ต่อสัญญา ไถ่ถอน ตัดหลุด และการปรับยอดทั้งหมด
-            แยกดูรายเดือนได้
+            แสดงรายการสัญญาใหม่ ต่อสัญญา ไถ่ถอน ตัดหลุด และการปรับยอดทั้งหมด แยกดูรายเดือนได้
           </p>
         </div>
 
@@ -312,7 +306,6 @@ export function DepositHistoryPage() {
             className="w-72 rounded-full border border-slate-300 px-3 py-1.5 text-xs text-slate-700 outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500"
           />
 
-          {/* ✅ FIX: ต้องเป็น /app/... */}
           <Link
             to="/app/deposit/list"
             className="rounded-full border border-slate-300 px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-50"
@@ -338,60 +331,53 @@ export function DepositHistoryPage() {
               <th className="px-4 py-3 text-center">จัดการ</th>
             </tr>
           </thead>
+
           <tbody>
             {filtered.length === 0 && (
               <tr>
-                <td
-                  colSpan={10}
-                  className="px-4 py-6 text-center text-xs text-slate-400"
-                >
+                <td colSpan={10} className="px-4 py-6 text-center text-xs text-slate-400">
                   ไม่พบสัญญาตามเงื่อนไขที่ค้นหา / เดือนที่เลือก
                 </td>
               </tr>
             )}
 
             {filtered.map((c) => (
-              <tr
-                key={c.id}
-                className="border-t border-slate-100 hover:bg-slate-50/70"
-              >
+              <tr key={c.id} className="border-t border-slate-100 hover:bg-slate-50/70">
                 <td className="px-4 py-3 align-top">
-                  <div className="font-mono text-[11px] text-slate-800">
-                    {c.code}
-                  </div>
+                  <div className="font-mono text-[11px] text-slate-800">{c.code}</div>
                 </td>
+
                 <td className="px-4 py-3 align-top">{renderStatus(c)}</td>
+
                 <td className="px-4 py-3 align-top">
-                  <div className="font-medium text-slate-800">
-                    {c.customer?.name || "-"}
-                  </div>
-                  <div className="text-[11px] text-slate-500">
-                    {c.customer?.phone || ""}
-                  </div>
+                  <div className="font-medium text-slate-800">{c.customer?.name || "-"}</div>
+                  <div className="text-[11px] text-slate-500">{c.customer?.phone || ""}</div>
                 </td>
+
                 <td className="px-4 py-3 align-top">
-                  <div>{c.asset?.modelName || "-"}</div>
-                  <div className="text-[11px] text-slate-500">
-                    SN: {c.asset?.serial || "-"}
-                  </div>
+                  <div>{getAssetModel(c)}</div>
+                  <div className="text-[11px] text-slate-500">SN: {getAssetSerial(c)}</div>
                 </td>
-                <td className="px-4 py-3 text-center align-top">
-                  {c.asset?.storageCode || "-"}
-                </td>
+
+                <td className="px-4 py-3 text-center align-top">{getStorageCode(c)}</td>
+
                 <td className="px-4 py-3 text-center text-[11px] text-slate-600 align-top">
                   {formatDate(c.startDate || c.createdAt)}
                 </td>
+
                 <td className="px-4 py-3 text-center text-[11px] text-slate-600 align-top">
                   {formatDate(c.dueDate)}
                 </td>
+
                 <td className="px-4 py-3 text-right font-semibold text-slate-800 align-top">
-                  {(c.principal || 0).toLocaleString()} ฿
+                  {getPrincipal(c).toLocaleString()} ฿
                 </td>
+
                 <td className="px-4 py-3 align-top text-[11px] text-slate-600">
                   {renderNote(c, rolledIds)}
                 </td>
+
                 <td className="px-4 py-3 text-center align-top">
-                  {/* ✅ FIX: ต้องเป็น /app/... */}
                   <Link
                     to={`/app/contracts/${c.id}`}
                     className="rounded-full bg-slate-900 px-3 py-1.5 text-[11px] font-medium text-white hover:bg-slate-800"
@@ -407,3 +393,5 @@ export function DepositHistoryPage() {
     </div>
   );
 }
+
+export default DepositHistoryPage;
