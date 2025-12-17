@@ -1,7 +1,16 @@
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
+
 import contractsRouter from "./routes/contracts.js";
+import aiRouter from "./routes/ai.js";
+import customersRouter from "./routes/customers.js";
+import cashbookRouter from "./routes/cashbook.js";
+import inventoryRouter from "./routes/inventory.js";
+import intakeRoutes from "./routes/intake.js";
+import consignmentsRouter from "./routes/consignments.js";
+import adminStatsRouter from "./routes/adminStats.js";
+import aiBusinessRouter from "./routes/aiBusiness.js";
 
 dotenv.config();
 
@@ -29,7 +38,6 @@ app.use(
   })
 );
 
-// ⭐ สำคัญมาก (แก้ 405)
 app.options("*", cors());
 
 app.get("/healthz", (req, res) => {
@@ -40,8 +48,16 @@ app.get("/debug/cors", (req, res) => {
   res.json({ origin: req.headers.origin || null, allowList });
 });
 
-// ⭐ mount API
+// ✅ mount API ให้ครบ
+app.use("/api/ai", aiRouter);
 app.use("/api/contracts", contractsRouter);
+app.use("/api/customers", customersRouter);
+app.use("/api/cashbook", cashbookRouter);
+app.use("/api/inventory", inventoryRouter);
+app.use("/api/intake", intakeRoutes);
+app.use("/api/consignments", consignmentsRouter);
+app.use("/api/admin/stats", adminStatsRouter);
+app.use("/api/ai/business", aiBusinessRouter);
 
 app.use((req, res) => {
   res.status(404).json({ ok: false, message: "Not Found", path: req.path });
@@ -53,6 +69,4 @@ app.use((err, req, res, next) => {
 });
 
 const port = process.env.PORT || 10000;
-app.listen(port, () =>
-  console.log("✅ Backend running on port", port)
-);
+app.listen(port, () => console.log("✅ Backend running on port", port));
