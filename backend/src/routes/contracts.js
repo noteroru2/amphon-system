@@ -160,6 +160,25 @@ function mapContractToResponse(contract) {
         .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
     : [];
 
+
+  const cashbookArr = Array.isArray(contract.cashbookEntries)
+  ? contract.cashbookEntries
+      .map((cb) => ({
+        id: cb.id,
+        type: cb.type,              // IN / OUT
+        category: cb.category,
+        amount: cb.amount,
+        profit: cb.profit,
+        description: cb.description,
+        createdAt: cb.createdAt,
+      }))
+      .sort(
+        (a, b) =>
+          new Date(a.createdAt).getTime() -
+          new Date(b.createdAt).getTime()
+      )
+  : [];
+
   return {
     // ===== core =====
     id: contract.id,
@@ -217,6 +236,7 @@ function mapContractToResponse(contract) {
     // ===== images/logs =====
     images: imagesArr,
     logs: logsArr,
+    cashbook: cashbookArr,
   };
 }
 
