@@ -2,23 +2,20 @@
 import { useParams, useNavigate } from "react-router-dom";
 import useSWR from "swr";
 import axios from "axios";
-import { useState } from "react";
-
-// ใช้ใบเสร็จเดิมของคุณ
+import { useEffect, useState } from "react";
 import { printReceipt } from "../../utils/printHelpers";
 
 const fetcher = (url: string) => axios.get(url).then((r) => r.data);
 
 type ItemDetail = {
   id: number;
-  title: string;
-  serial: string;
+  title?: string;
   name: string;
+  serial?: string;
   status: string;
   cost: number;
-  sellingPrice: number;
-  contractCode?: string | null;
-  soldAt?: string | null;
+  sellingPrice?: number;
+  quantityAvailable: number;
   buyerName?: string;
   buyerPhone?: string;
   buyerAddress?: string;
@@ -28,50 +25,65 @@ type ItemDetail = {
 const InventorySellPage: React.FC = () => {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { data, isLoading } = useSWR<ItemDetail>(
+
+  const { data: item, isLoading } = useSWR<ItemDetail>(
     id ? `/api/inventory/${id}` : null,
     fetcher
   );
 
-  const [price, setPrice] = useState<string>("");
+  const [price, setPrice] = useState("");
+  const [sellQty, setSellQty] = useState(1);
+
   const [buyerName, setBuyerName] = useState("");
   const [buyerPhone, setBuyerPhone] = useState("");
   const [buyerAddress, setBuyerAddress] = useState("");
   const [buyerTaxId, setBuyerTaxId] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [sellQty, setSellQty] = useState(1);
-  const item = data;
 
-  // ตั้งค่าเริ่มต้น (ราคา + buyer หากเคยมี)
-  if (item && price === "") {
+  const [submitting, setSubmitting] = useState(false);
+
+  // ✅ ตั้งค่า default เมื่อโหลด item เสร็จ
+  useEffect(() => {
+    if (!item) return;
+
     const initial =
       item.sellingPrice && item.sellingPrice > 0
         ? item.sellingPrice
         : item.cost;
-    setTimeout(() => {
-      setPrice(String(initial));
-      setBuyerName(item.buyerName || "");
-      setBuyerPhone(item.buyerPhone || "");
-      setBuyerAddress(item.buyerAddress || "");
-      setBuyerTaxId(item.buyerTaxId || "");
-    }, 0);
-  }
+
+    setPrice(String(initial));
+    setBuyerName(item.buyerName || "");
+    setBuyerPhone(item.buyerPhone || "");
+    setBuyerAddress(item.buyerAddress || "");
+    setBuyerTaxId(item.buyerTaxId || "");
+    setSellQty(1);
+  }, [item]);
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!item) return;
 
-    const num = Number(price);
-    if (!num || num <= 0) {
+    const numPrice = Number(price);
+
+    if (!Number.isFinite(numPrice) || numPrice <= 0) {
       alert("กรุณาระบุราคาขายให้ถูกต้อง");
       return;
     }
+
+    if (sellQty <= 0 || sellQty > item.quantityAvailable) {
+      alert(`จำนวนขายต้องอยู่ระหว่าง 1 - ${item.quantityAvailable}`);
+      return;
+    }
+
+    const ok = window.confirm(
+      `ยืนยันขายสินค้า ${item.name}\nจำนวน ${sellQty} ชิ้น\nราคาชิ้นละ ${numPrice.toLocaleString()} บาท`
+    );
+    if (!ok) return;
 
     setSubmitting(true);
     try {
       // 1) บันทึกการขาย
       await axios.post(`/api/inventory/${item.id}/sell`, {
-        sellingPrice: num,
+        sellingPrice: numPrice,
         quantity: sellQty,
         buyerName: buyerName || undefined,
         buyerPhone: buyerPhone || undefined,
@@ -79,22 +91,22 @@ const InventorySellPage: React.FC = () => {
         buyerTaxId: buyerTaxId || undefined,
       });
 
-      // 2) ดึงข้อมูลล่าสุดของสินค้าเพื่อให้ใบเสร็จใช้ข้อมูลจริงจาก DB
+      // 2) โหลดข้อมูลล่าสุด
       const { data: latest } = await axios.get<ItemDetail>(
         `/api/inventory/${item.id}`
       );
 
-      // 3) เรียก printReceipt จาก utils
-      //    ใช้ latest เป็น InventoryItem, และ num เป็นราคาขาย (หรือ latest.sellingPrice ก็ได้)
+      // 3) พิมพ์ใบเสร็จ (ยอดรวมจริง)
+      const totalAmount = numPrice * sellQty;
+
       printReceipt(
         {
-          // cast เป็น any เพื่อให้เข้ากับ type InventoryItem ที่ใช้ใน printHelpers
           ...(latest as any),
+          quantitySold: sellQty,
         },
-        num
+        totalAmount
       );
 
-      // 4) กลับไปหน้าคลังสินค้า
       navigate("/inventory");
     } catch (err) {
       console.error("ขายสินค้าล้มเหลว:", err);
@@ -118,120 +130,92 @@ const InventorySellPage: React.FC = () => {
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-slate-900/60 px-4">
-      <div className="w-full max-w-md overflow-hidden rounded-3xl bg-white shadow-2xl">
-        {/* Header */}
+      <div className="w-full max-w-md rounded-3xl bg-white shadow-2xl">
         <div className="bg-slate-900 px-6 py-4 text-white">
-          <div className="text-[11px] uppercase tracking-wide text-slate-300">
-            แจ้งขายสินค้า
-          </div>
+          <div className="text-[11px] text-slate-300">แจ้งขายสินค้า</div>
           <div className="text-sm font-semibold">{title}</div>
-          {item.contractCode && (
-            <div className="mt-1 text-[11px] text-slate-300">
-              มาจากสัญญา: {item.contractCode}
-            </div>
-          )}
           {item.serial && (
-            <div className="mt-1 text-[11px] text-slate-400">
-              Serial: {item.serial}
-            </div>
+            <div className="text-[11px] text-slate-400">SN: {item.serial}</div>
           )}
         </div>
 
-        {/* Body */}
         <form onSubmit={onSubmit} className="space-y-4 px-6 py-5 text-xs">
           <div>
-            <label className="mb-1 block text-[11px] font-medium text-slate-700">
-              ราคาขายจริง (Actual Sale Price)
+            <label className="block text-[11px] font-medium text-slate-700">
+              ราคาขายต่อชิ้น
             </label>
-            <div className="flex items-center rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2">
-              <input
-                type="number"
-                className="w-full bg-transparent text-sm font-semibold text-slate-900 outline-none"
-                value={price}
-                onChange={(e) => setPrice(e.target.value)}
-              />
-              <span className="ml-2 text-[11px] font-medium text-slate-400">
-                THB
-              </span>
-            </div>
+            <input
+              type="number"
+              className="mt-1 w-full rounded-xl border px-3 py-2 font-semibold"
+              value={price}
+              onChange={(e) => setPrice(e.target.value)}
+            />
 
-            <div>
-  <label className="text-sm font-medium">จำนวนที่ขาย</label>
-  <input
-    type="number"
-    min={1}
-    max={item.quantityAvailable}
-    value={sellQty}
-    onChange={(e) => setSellQty(Number(e.target.value))}
-    className="mt-1 w-full rounded border px-3 py-2"
-  />
-  <p className="text-xs text-slate-500">
-    คงเหลือ {item.quantityAvailable} ชิ้น
-  </p>
-</div>
-
+            <label className="mt-3 block text-[11px] font-medium text-slate-700">
+              จำนวนที่ขาย
+            </label>
+            <input
+              type="number"
+              min={1}
+              max={item.quantityAvailable}
+              value={sellQty}
+              onChange={(e) => setSellQty(Number(e.target.value))}
+              className="mt-1 w-full rounded-xl border px-3 py-2"
+            />
 
             <div className="mt-1 text-[10px] text-slate-400">
-              ทุน (Cost): {item.cost.toLocaleString("th-TH")} ฿
+              คงเหลือ {item.quantityAvailable} ชิ้น · ทุน {item.cost.toLocaleString()} บาท
             </div>
           </div>
 
           <div className="space-y-2">
-            <div className="text-[11px] font-medium text-slate-700">
-              ข้อมูลผู้ซื้อ
-            </div>
             <input
-              type="text"
-              placeholder="ชื่อ-นามสกุล"
-              className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-xs outline-none focus:border-blue-400"
+              placeholder="ชื่อผู้ซื้อ"
+              className="w-full rounded-xl border px-3 py-2"
               value={buyerName}
               onChange={(e) => setBuyerName(e.target.value)}
             />
             <input
-              type="text"
-              placeholder="เบอร์โทรศัพท์"
-              className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-xs outline-none focus:border-blue-400"
+              placeholder="เบอร์โทร"
+              className="w-full rounded-xl border px-3 py-2"
               value={buyerPhone}
               onChange={(e) => setBuyerPhone(e.target.value)}
             />
             <input
-              type="text"
-              placeholder="เลขผู้เสียภาษี (ถ้ามี)"
-              className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-xs outline-none focus:border-blue-400"
+              placeholder="เลขผู้เสียภาษี"
+              className="w-full rounded-xl border px-3 py-2"
               value={buyerTaxId}
               onChange={(e) => setBuyerTaxId(e.target.value)}
             />
             <textarea
-              placeholder="ที่อยู่สำหรับออกใบเสร็จ / ใบกำกับภาษี"
-              className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-xs outline-none focus:border-blue-400"
+              placeholder="ที่อยู่"
               rows={3}
+              className="w-full rounded-xl border px-3 py-2"
               value={buyerAddress}
               onChange={(e) => setBuyerAddress(e.target.value)}
             />
           </div>
 
-          {/* Footer buttons */}
-          <div className="mt-2 flex justify-end gap-2 pt-2 text-xs">
+          <div className="flex justify-end gap-2 pt-2">
             <button
               type="button"
               onClick={() => navigate("/inventory")}
-              disabled={submitting}
-              className="rounded-2xl border border-slate-200 px-4 py-2 font-medium text-slate-600 hover:bg-slate-50 disabled:opacity-60"
+              className="rounded-xl border px-4 py-2"
             >
               ยกเลิก
             </button>
             <button
               type="submit"
               disabled={submitting}
-              className="rounded-2xl bg-blue-600 px-4 py-2 font-medium text-white hover:bg-blue-700 disabled:opacity-60"
+              className="rounded-xl bg-blue-600 px-4 py-2 text-white"
             >
-              {submitting ? "กำลังบันทึก..." : "ยืนยันการขายและพิมพ์ใบเสร็จ"}
+              {submitting ? "กำลังบันทึก..." : "ยืนยันขาย"}
             </button>
           </div>
         </form>
       </div>
     </div>
   );
-}
+};
 
 export default InventorySellPage;

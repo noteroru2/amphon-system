@@ -234,7 +234,17 @@ const InventoryBulkSellPage: React.FC = () => {
         taxId: buyerTaxId || undefined,
       };
 
-      printBulkSellReceipt(itemsForReceipt, buyer);
+      printBulkSellReceipt(
+  selectedItems.map((it) => ({
+    id: it.id,
+    title: it.name,        // หรือ it.title ตามของคุณ
+    serial: it.serial ?? "",
+    unitPrice: it.sellingPrice, // ราคาต่อชิ้น
+    quantity: it.quantity       // จำนวนที่ขาย
+  })),
+  buyerInfo
+);
+
 
       alert("บันทึกการขายเรียบร้อย");
       navigate("/inventory");

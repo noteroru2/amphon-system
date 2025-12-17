@@ -4,7 +4,6 @@ import axios from "axios";
 import { useNavigate } from "react-router-dom";
 import { arrayFromApi } from "../lib/arrayFromApi";
 
-
 type InventoryItemRow = {
   id: number;
   code: string;
@@ -12,14 +11,22 @@ type InventoryItemRow = {
   serial?: string | null;
   status: string;
   sourceType: string;
-  cost: number;
+  cost: number; // อาจเป็น "ต้นทุนรวม" หรือ "ต่อชิ้น" แล้วแต่ระบบ
   targetPrice: number;
   sellingPrice: number;
   quantityAvailable: number;
+  quantity?: number; // ✅ เผื่อ backend ส่งมาด้วย
   createdAt: string;
 };
 
 type TabKey = "ALL" | "READY" | "SOLD";
+
+// ✅ normalize status ฝั่งหน้า (กันกรณี backend ส่ง status ไม่สอดคล้องกับ qty)
+const normalizeRowStatus = (it: InventoryItemRow) => {
+  const available = Number(it.quantityAvailable ?? 0);
+  if (available <= 0) return "SOLD";
+  return (it.status || "IN_STOCK").toUpperCase();
+};
 
 const statusLabel = (status: string): { text: string; colorClass: string } => {
   const s = status?.toUpperCase() || "";
@@ -40,7 +47,8 @@ const sourceLabel = (sourceType: string): string => {
   return "-";
 };
 
-const formatMoney = (n: number | null | undefined) => Number(n ?? 0).toLocaleString();
+const formatMoney = (n: number | null | undefined) =>
+  Number(n ?? 0).toLocaleString();
 
 const InventoryPage: React.FC = () => {
   const navigate = useNavigate();
@@ -53,18 +61,15 @@ const InventoryPage: React.FC = () => {
   const fetchInventory = async () => {
     try {
       setLoading(true);
-
-      // ✅ อย่าฟิก generic เป็น InventoryItemRow[] เพราะ backend อาจส่ง wrapper object
       const res = await axios.get("/api/inventory");
 
       // ✅ normalize ให้เป็น array เสมอ
       const list = arrayFromApi<InventoryItemRow>(res.data);
-
-      setItems(list);
+      setItems(Array.isArray(list) ? list : []);
     } catch (err) {
       console.error("GET /api/inventory error:", err);
       alert("ไม่สามารถดึงข้อมูลคลังสินค้าได้");
-      setItems([]); // ✅ กัน state ค้าง
+      setItems([]);
     } finally {
       setLoading(false);
     }
@@ -78,10 +83,8 @@ const InventoryPage: React.FC = () => {
     setSearch(e.target.value);
   };
 
-  // ✅ กันพัง + ทำให้คำนวณไม่หนักทุก render
   const filteredItems = useMemo(() => {
     const safeItems: InventoryItemRow[] = Array.isArray(items) ? items : [];
-
     const q = search.trim().toLowerCase();
 
     return safeItems.filter((it) => {
@@ -94,11 +97,9 @@ const InventoryPage: React.FC = () => {
         " " +
         sourceLabel(it.sourceType);
 
-      if (q) {
-        if (!text.toLowerCase().includes(q)) return false;
-      }
+      if (q && !text.toLowerCase().includes(q)) return false;
 
-      const st = it.status?.toUpperCase() || "";
+      const st = normalizeRowStatus(it);
 
       if (tab === "READY") {
         return st === "IN_STOCK" || st === "READY" || st === "READY_FOR_SALE";
@@ -106,7 +107,7 @@ const InventoryPage: React.FC = () => {
       if (tab === "SOLD") {
         return st === "SOLD" || st === "SOLD_OUT";
       }
-      return true; // ALL
+      return true;
     });
   }, [items, search, tab]);
 
@@ -116,21 +117,27 @@ const InventoryPage: React.FC = () => {
         {/* Header */}
         <div className="mb-4 flex items-center justify-between gap-4">
           <div>
-            <h1 className="text-xl font-semibold text-slate-800">คลังสินค้า (Inventory)</h1>
-            <p className="text-sm text-slate-500">จัดการสต๊อกสินค้า เตรียมพร้อมขาย และพิมพ์ใบเสร็จทีหลัง</p>
+            <h1 className="text-xl font-semibold text-slate-800">
+              คลังสินค้า (Inventory)
+            </h1>
+            <p className="text-sm text-slate-500">
+              จัดการสต๊อกสินค้า เตรียมพร้อมขาย และพิมพ์ใบเสร็จทีหลัง
+            </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
-              onClick={() => navigate("/intake/new")}
+              // ✅ FIX: ให้เป็น /app/... เหมือนหน้าอื่น
+              onClick={() => navigate("/app/intake/new")}
               className="rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50"
             >
               + รับซื้อสินค้า (Buy In)
             </button>
             <button
               type="button"
-              onClick={() => navigate("/inventory/bulk-sell")}
+              // ✅ FIX: ให้เป็น /app/... เหมือนหน้าอื่น
+              onClick={() => navigate("/app/inventory/bulk-sell")}
               className="rounded-full bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-700"
             >
               เปิดบิลหลายชิ้น
@@ -147,7 +154,9 @@ const InventoryPage: React.FC = () => {
                 type="button"
                 onClick={() => setTab("ALL")}
                 className={`rounded-full px-3 py-1.5 text-xs font-medium ${
-                  tab === "ALL" ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                  tab === "ALL"
+                    ? "bg-blue-600 text-white"
+                    : "bg-slate-100 text-slate-600 hover:bg-slate-200"
                 }`}
               >
                 ทั้งหมด
@@ -156,7 +165,9 @@ const InventoryPage: React.FC = () => {
                 type="button"
                 onClick={() => setTab("READY")}
                 className={`rounded-full px-3 py-1.5 text-xs font-medium ${
-                  tab === "READY" ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                  tab === "READY"
+                    ? "bg-blue-600 text-white"
+                    : "bg-slate-100 text-slate-600 hover:bg-slate-200"
                 }`}
               >
                 พร้อมขาย
@@ -165,7 +176,9 @@ const InventoryPage: React.FC = () => {
                 type="button"
                 onClick={() => setTab("SOLD")}
                 className={`rounded-full px-3 py-1.5 text-xs font-medium ${
-                  tab === "SOLD" ? "bg-blue-600 text-white" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+                  tab === "SOLD"
+                    ? "bg-blue-600 text-white"
+                    : "bg-slate-100 text-slate-600 hover:bg-slate-200"
                 }`}
               >
                 ขายแล้ว
@@ -195,18 +208,42 @@ const InventoryPage: React.FC = () => {
 
           {/* Table body */}
           {loading ? (
-            <div className="px-6 py-8 text-center text-sm text-slate-500">กำลังโหลดข้อมูล...</div>
+            <div className="px-6 py-8 text-center text-sm text-slate-500">
+              กำลังโหลดข้อมูล...
+            </div>
           ) : filteredItems.length === 0 ? (
-            <div className="px-6 py-8 text-center text-sm text-slate-500">ไม่มีรายการสินค้าในคลัง</div>
+            <div className="px-6 py-8 text-center text-sm text-slate-500">
+              ไม่มีรายการสินค้าในคลัง
+            </div>
           ) : (
             <div>
               {filteredItems.map((item) => {
-                const st = statusLabel(item.status);
+                const stKey = normalizeRowStatus(item);
+                const st = statusLabel(stKey);
+
+                // ✅ ทุนต่อหน่วย (ถ้ามี quantity และ cost เป็นรวม)
+                const qtyTotal = Math.max(Number(item.quantity ?? 1), 1);
+                const unitCost =
+                  qtyTotal > 1 ? Number(item.cost ?? 0) / qtyTotal : Number(item.cost ?? 0);
+
+                const showSellPrice =
+                  Number(item.sellingPrice ?? 0) > 0
+                    ? Number(item.sellingPrice)
+                    : Number(item.targetPrice ?? 0);
+
+                const disabledSell =
+                  stKey === "SOLD" || stKey === "SOLD_OUT" || (item.quantityAvailable ?? 0) <= 0;
+
                 return (
-                  <div key={item.id} className="grid grid-cols-12 items-center border-t border-slate-100 px-6 py-4 text-sm">
+                  <div
+                    key={item.id}
+                    className="grid grid-cols-12 items-center border-t border-slate-100 px-6 py-4 text-sm"
+                  >
                     {/* สินค้า */}
                     <div className="col-span-5">
-                      <div className="font-medium text-slate-800">{item.name || "-"}</div>
+                      <div className="font-medium text-slate-800">
+                        {item.name || "-"}
+                      </div>
                       <div className="mt-0.5 text-xs text-slate-500">
                         <span className="mr-2">
                           Code: <span className="font-mono">{item.code}</span>
@@ -219,37 +256,46 @@ const InventoryPage: React.FC = () => {
                       </div>
                       <div className="mt-0.5 text-[11px] text-slate-400">
                         เข้าเมื่อ:{" "}
-                        {item.createdAt ? new Date(item.createdAt).toLocaleDateString("th-TH") : "-"}
+                        {item.createdAt
+                          ? new Date(item.createdAt).toLocaleDateString("th-TH")
+                          : "-"}
                         {" · "}
-                        ทุนต่อชิ้น: {formatMoney(item.cost)} บาท
+                        ทุนต่อชิ้น: {formatMoney(unitCost)} บาท
                       </div>
                     </div>
 
                     {/* สถานะ */}
                     <div className="col-span-2">
-                      <span className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${st.colorClass}`}>
+                      <span
+                        className={`inline-flex rounded-full px-2 py-0.5 text-xs font-medium ${st.colorClass}`}
+                      >
                         {st.text}
                       </span>
                     </div>
 
                     {/* ที่มา */}
-                    <div className="col-span-2 text-slate-600">{sourceLabel(item.sourceType)}</div>
+                    <div className="col-span-2 text-slate-600">
+                      {sourceLabel(item.sourceType)}
+                    </div>
 
                     {/* จำนวนคงเหลือ */}
-                    <div className="col-span-1 text-center text-slate-700">{item.quantityAvailable ?? 0}</div>
+                    <div className="col-span-1 text-center text-slate-700">
+                      {item.quantityAvailable ?? 0}
+                    </div>
 
                     {/* ราคาขาย */}
                     <div className="col-span-1 text-right font-semibold text-slate-800">
-                      {formatMoney(item.sellingPrice || item.targetPrice)}
+                      {formatMoney(showSellPrice)}
                     </div>
 
                     {/* จัดการ */}
                     <div className="col-span-1 text-right">
                       <button
                         type="button"
-                        onClick={() => navigate(`/inventory/sell/${item.id}`)}
+                        // ✅ FIX: ให้เป็น /app/... เหมือนระบบหลัก
+                        onClick={() => navigate(`/app/inventory/sell/${item.id}`)}
                         className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-blue-700 disabled:opacity-60"
-                        disabled={item.status?.toUpperCase() === "SOLD" || item.status?.toUpperCase() === "SOLD_OUT"}
+                        disabled={disabledSell}
                       >
                         แจ้งขาย
                       </button>

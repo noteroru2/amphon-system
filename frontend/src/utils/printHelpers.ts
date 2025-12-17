@@ -721,13 +721,35 @@ export const printRedemptionReceipt = (contract: Contract) => {
   }
 };
 
-// ---------- 5) ใบเสร็จขายสินค้า ----------
-export const printReceipt = (item: InventoryItem, price: number) => {
+// ---------- 5) ใบเสร็จขายสินค้า (รองรับ qty + unit price) ----------
+type SaleBuyerInfo = {
+  name?: string;
+  phone?: string;
+  address?: string;
+  taxId?: string;
+};
+
+export const printReceipt = (
+  item: InventoryItem,
+  sellingPricePerUnit: number,
+  quantity: number = 1,
+  buyer?: SaleBuyerInfo
+) => {
   const currentDate = new Date();
-  const customerDisplay = (item as any).buyerName
-    ? `${(item as any).buyerName}(${(item as any).buyerPhone || "-"})`
-    : "ทั่วไป (Cash Sale)";
-  const addressDisplay = (item as any).buyerAddress || "-";
+
+  const qty = Math.max(Number(quantity || 0), 1);
+  const unitPrice = Number(sellingPricePerUnit ?? 0);
+  const lineTotal = unitPrice * qty;
+
+  const customerDisplay =
+    buyer?.name
+      ? `${buyer.name}${buyer.phone ? ` (${buyer.phone})` : ""}`
+      : (item as any).buyerName
+      ? `${(item as any).buyerName} (${(item as any).buyerPhone || "-"})`
+      : "ทั่วไป (Cash Sale)";
+
+  const addressDisplay =
+    buyer?.address || (item as any).buyerAddress || "-";
 
   const html = `
     <html>
@@ -757,13 +779,8 @@ export const printReceipt = (item: InventoryItem, price: number) => {
                  <strong>ที่อยู่ (Address):</strong> ${addressDisplay}
                </td>
                <td width="40%" style="text-align: right; vertical-align: top;">
-                 <strong>เลขที่ (No):</strong> INV-${String(item.id).padStart(
-                   5,
-                   "0"
-                 )}<br>
-                 <strong>วันที่ (Date):</strong> ${currentDate.toLocaleDateString(
-                   "th-TH"
-                 )}
+                 <strong>เลขที่ (No):</strong> INV-${String(item.id).padStart(5, "0")}<br>
+                 <strong>วันที่ (Date):</strong> ${currentDate.toLocaleDateString("th-TH")}
                </td>
              </tr>
            </table>
@@ -772,9 +789,10 @@ export const printReceipt = (item: InventoryItem, price: number) => {
         <table class="receipt-table">
            <thead>
              <tr>
-               <th width="10%">ลำดับ</th>
-               <th width="50%">รายการสินค้า (Description)</th>
-               <th width="20%">จำนวน (Qty)</th>
+               <th width="8%">ลำดับ</th>
+               <th width="42%">รายการสินค้า (Description)</th>
+               <th width="15%">จำนวน (Qty)</th>
+               <th width="15%">ราคาต่อหน่วย</th>
                <th width="20%">จำนวนเงิน (Amount)</th>
              </tr>
            </thead>
@@ -782,31 +800,32 @@ export const printReceipt = (item: InventoryItem, price: number) => {
              <tr>
                <td style="text-align: center;">1</td>
                <td>
-                 <div class="bold">${item.title}</div>
-                 <div style="font-size: 11px; color: #555;">Serial Number: ${item.serial}</div>
+                 <div class="bold">${(item as any).title || (item as any).name || "-"}</div>
+                 <div style="font-size: 11px; color: #555;">Serial Number: ${(item as any).serial || "-"}</div>
                </td>
-               <td style="text-align: center;">1</td>
-               <td style="text-align: right;">${money(price)}</td>
+               <td style="text-align: center;">${qty}</td>
+               <td style="text-align: right;">${money(unitPrice)}</td>
+               <td style="text-align: right;">${money(lineTotal)}</td>
              </tr>
-             <tr><td colspan="4" style="height: 300px; border-bottom: 1px solid #000;"></td></tr>
+             <tr><td colspan="5" style="height: 300px; border-bottom: 1px solid #000;"></td></tr>
            </tbody>
            <tfoot>
              <tr class="total-row">
-               <td colspan="2" style="border: none;"></td>
+               <td colspan="3" style="border: none;"></td>
                <td style="text-align: right; border: 1px solid #000;">รวมเงิน (Total)</td>
-               <td style="text-align: right; border: 1px solid #000;">${money(price)}</td>
+               <td style="text-align: right; border: 1px solid #000;">${money(lineTotal)}</td>
              </tr>
              <tr class="total-row">
-               <td colspan="2" style="border: none;"></td>
+               <td colspan="3" style="border: none;"></td>
                <td style="text-align: right; border: 1px solid #000;">ภาษีมูลค่าเพิ่ม (VAT 7%)</td>
                <td style="text-align: right; border: 1px solid #000;">-</td>
              </tr>
              <tr class="total-row" style="font-size: 14px;">
-               <td colspan="2" style="border: none; text-align: left; background-color: #fff;">
-                  ตัวอักษร: (${money(price)} บาทถ้วน)
+               <td colspan="3" style="border: none; text-align: left; background-color: #fff;">
+                  ตัวอักษร: (${money(lineTotal)} บาทถ้วน)
                </td>
                <td style="text-align: right; border: 2px solid #000;">จำนวนเงินสุทธิ</td>
-               <td style="text-align: right; border: 2px solid #000;">${money(price)}</td>
+               <td style="text-align: right; border: 2px solid #000;">${money(lineTotal)}</td>
              </tr>
            </tfoot>
         </table>
@@ -838,12 +857,13 @@ export const printReceipt = (item: InventoryItem, price: number) => {
   }
 };
 
-
+// ---------- 5.1) ใบเสร็จขายสินค้า "หลายชิ้น" (รองรับ qty + unit price) ----------
 type BulkReceiptItem = {
   id: number;
   title: string;
   serial?: string;
-  price: number;
+  unitPrice: number;   // ราคาต่อชิ้น
+  quantity: number;    // จำนวน
 };
 
 type BulkBuyerInfo = {
@@ -853,44 +873,41 @@ type BulkBuyerInfo = {
   taxId?: string;
 };
 
-
-// ---------- 5.1) ใบเสร็จขายสินค้า "หลายชิ้น" ----------
-export const printBulkSellReceipt = (
-  items: BulkReceiptItem[],
-  buyer: BulkBuyerInfo
-) => {
-  if (!items || items.length === 0) {
-    return;
-  }
+export const printBulkSellReceipt = (items: BulkReceiptItem[], buyer: BulkBuyerInfo) => {
+  if (!items || items.length === 0) return;
 
   const currentDate = new Date();
 
-  const total = items.reduce((sum, it) => sum + (it.price || 0), 0);
-  const qtyTotal = items.length;
+  const safeItems = items.map((it) => ({
+    ...it,
+    unitPrice: Number(it.unitPrice ?? 0),
+    quantity: Math.max(Number(it.quantity ?? 0), 1),
+  }));
 
-  const customerDisplay = buyer.name
+  const total = safeItems.reduce((sum, it) => sum + it.unitPrice * it.quantity, 0);
+  const qtyTotal = safeItems.reduce((sum, it) => sum + it.quantity, 0);
+
+  const customerDisplay = buyer?.name
     ? `${buyer.name}${buyer.phone ? ` (${buyer.phone})` : ""}`
     : "ทั่วไป (Cash Sale)";
-  const addressDisplay = buyer.address || "-";
+  const addressDisplay = buyer?.address || "-";
 
-  const rowsHtml = items
-    .map(
-      (it, index) => `
+  const rowsHtml = safeItems
+    .map((it, index) => {
+      const lineTotal = it.unitPrice * it.quantity;
+      return `
         <tr>
           <td style="text-align: center;">${index + 1}</td>
           <td>
             <div class="bold">${it.title}</div>
-            ${
-              it.serial
-                ? `<div style="font-size: 11px; color: #555;">Serial Number: ${it.serial}</div>`
-                : ""
-            }
+            ${it.serial ? `<div style="font-size: 11px; color: #555;">Serial Number: ${it.serial}</div>` : ""}
           </td>
-          <td style="text-align: center;">1</td>
-          <td style="text-align: right;">${money(it.price)}</td>
+          <td style="text-align: center;">${it.quantity}</td>
+          <td style="text-align: right;">${money(it.unitPrice)}</td>
+          <td style="text-align: right;">${money(lineTotal)}</td>
         </tr>
-      `
-    )
+      `;
+    })
     .join("");
 
   const html = `
@@ -901,23 +918,15 @@ export const printBulkSellReceipt = (
         <style>${COMMON_CSS}</style>
       </head>
       <body>
-        <div class="header">
-          <div class="shop-title">${SHOP_INFO.name}</div>
-          <div class="shop-subtitle">${SHOP_INFO.address}</div>
-          <div class="shop-subtitle">โทร: ${SHOP_INFO.phone}</div>
-          <div style="margin-top: 10px; display: flex; justify-content: space-between; align-items: flex-start;">
-            <div style="text-align: left;">
-              <div class="title">ใบเสร็จรับเงิน (ขายสินค้า)</div>
-              <div class="subtitle">RECEIPT - MULTI ITEM</div>
-            </div>
-            <div style="text-align: right;">
-              <div style="font-size: 13px;">
-                <div><strong>วันที่ (Date):</strong> ${currentDate.toLocaleDateString(
-                  "th-TH"
-                )}</div>
-                <div><strong>จำนวนรายการ (Items):</strong> ${qtyTotal}</div>
-              </div>
-            </div>
+        <div class="receipt-header">
+          <div>
+            <h1 class="shop-title">${SHOP_INFO.name}</h1>
+            <p class="shop-subtitle">${SHOP_INFO.address}</p>
+            <p class="shop-subtitle">โทร: ${SHOP_INFO.phone}</p>
+          </div>
+          <div style="text-align: right;">
+            <div class="title">ใบเสร็จรับเงิน (ขายสินค้า)</div>
+            <div style="font-size: 14px; margin-top: 5px;">RECEIPT - MULTI ITEM</div>
           </div>
         </div>
 
@@ -929,12 +938,9 @@ export const printBulkSellReceipt = (
                 <strong>ที่อยู่ (Address):</strong> ${addressDisplay}
               </td>
               <td width="40%" style="text-align: right; vertical-align: top;">
-                <strong>เลขที่ (No):</strong> INV-MULTI-${String(
-                  items[0].id
-                ).padStart(5, "0")}<br>
-                <strong>วันที่ (Date):</strong> ${currentDate.toLocaleDateString(
-                  "th-TH"
-                )}
+                <strong>เลขที่ (No):</strong> INV-MULTI-${String(safeItems[0].id).padStart(5, "0")}<br>
+                <strong>วันที่ (Date):</strong> ${currentDate.toLocaleDateString("th-TH")}<br>
+                <strong>จำนวนชิ้นรวม (Qty):</strong> ${qtyTotal}
               </td>
             </tr>
           </table>
@@ -943,29 +949,30 @@ export const printBulkSellReceipt = (
         <table class="receipt-table">
           <thead>
             <tr>
-              <th width="10%">ลำดับ</th>
-              <th width="50%">รายการสินค้า (Description)</th>
-              <th width="20%">จำนวน (Qty)</th>
+              <th width="8%">ลำดับ</th>
+              <th width="42%">รายการสินค้า (Description)</th>
+              <th width="15%">จำนวน (Qty)</th>
+              <th width="15%">ราคาต่อหน่วย</th>
               <th width="20%">จำนวนเงิน (Amount)</th>
             </tr>
           </thead>
           <tbody>
             ${rowsHtml}
-            <tr><td colspan="4" style="height: 200px; border-bottom: 1px solid #000;"></td></tr>
+            <tr><td colspan="5" style="height: 200px; border-bottom: 1px solid #000;"></td></tr>
           </tbody>
           <tfoot>
             <tr class="total-row">
-              <td colspan="2" style="border: none;"></td>
+              <td colspan="3" style="border: none;"></td>
               <td style="text-align: right; border: 1px solid #000;">รวมเงิน (Total)</td>
               <td style="text-align: right; border: 1px solid #000;">${money(total)}</td>
             </tr>
             <tr class="total-row">
-              <td colspan="2" style="border: none;"></td>
+              <td colspan="3" style="border: none;"></td>
               <td style="text-align: right; border: 1px solid #000;">ภาษีมูลค่าเพิ่ม (VAT 7%)</td>
               <td style="text-align: right; border: 1px solid #000;">-</td>
             </tr>
             <tr class="total-row" style="font-size: 14px;">
-              <td colspan="2" style="border: none; text-align: left; background-color: #fff;">
+              <td colspan="3" style="border: none; text-align: left; background-color: #fff;">
                 ตัวอักษร: (${money(total)} บาทถ้วน)
               </td>
               <td style="text-align: right; border: 2px solid #000;">จำนวนเงินสุทธิ</td>
@@ -1001,6 +1008,7 @@ export const printBulkSellReceipt = (
     popup.document.close();
   }
 };
+
 
 // ---------- 6) ใบสำคัญรับเงินจาก cashbook ----------
 export const printTransactionReceipt = (cashbook: Cashbook) => {

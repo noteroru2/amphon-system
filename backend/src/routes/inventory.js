@@ -7,11 +7,14 @@ const router = express.Router();
 // -------- helpers --------
 const toNumber = (v) => {
   if (v === null || v === undefined) return 0;
-  // Prisma Decimal -> string/Decimal-like
-  const n = Number(v);
+  const n = Number(v); // Prisma Decimal -> number ได้ถ้าเป็น string/Decimal-like
   return Number.isFinite(n) ? n : 0;
 };
 
+// status rule:
+// - ถ้า available <= 0 => SOLD
+// - ถ้า status มีอยู่แล้ว (เช่น RESERVED) ให้คงไว้
+// - default => IN_STOCK
 const normalizeStatus = (item) => {
   const available = Number(item.quantityAvailable ?? 0);
   if (available <= 0) return "SOLD";
@@ -19,7 +22,6 @@ const normalizeStatus = (item) => {
 };
 
 // -------- 1) LIST: GET /api/inventory --------
-// สำหรับหน้า InventoryPage.tsx
 router.get("/", async (req, res) => {
   try {
     const items = await prisma.inventoryItem.findMany({
@@ -31,12 +33,16 @@ router.get("/", async (req, res) => {
         serial: true,
         status: true,
         sourceType: true,
+        storageLocation: true,
+
         cost: true,
         targetPrice: true,
         sellingPrice: true,
+
         quantity: true,
         quantityAvailable: true,
         quantitySold: true,
+
         createdAt: true,
       },
     });
@@ -48,12 +54,16 @@ router.get("/", async (req, res) => {
       serial: it.serial,
       status: normalizeStatus(it),
       sourceType: it.sourceType || "-",
+      storageLocation: it.storageLocation || null,
+
       cost: toNumber(it.cost),
       targetPrice: toNumber(it.targetPrice),
       sellingPrice: toNumber(it.sellingPrice),
+
       quantity: Number(it.quantity ?? 1),
       quantityAvailable: Number(it.quantityAvailable ?? 0),
       quantitySold: Number(it.quantitySold ?? 0),
+
       createdAt: it.createdAt,
     }));
 
@@ -67,11 +77,10 @@ router.get("/", async (req, res) => {
 });
 
 // -------- 2) DETAIL: GET /api/inventory/:id --------
-// ใช้สำหรับหน้าแจ้งขาย / print / bulk receipt fetch latest
 router.get("/:id", async (req, res) => {
   try {
     const id = Number(req.params.id);
-    if (!id) return res.status(400).json({ message: "id ไม่ถูกต้อง" });
+    if (!Number.isFinite(id)) return res.status(400).json({ message: "id ไม่ถูกต้อง" });
 
     const it = await prisma.inventoryItem.findUnique({
       where: { id },
@@ -96,6 +105,9 @@ router.get("/:id", async (req, res) => {
         buyerPhone: true,
         buyerAddress: true,
         buyerTaxId: true,
+
+        grossProfit: true,
+        netProfit: true,
 
         createdAt: true,
         updatedAt: true,
@@ -127,12 +139,18 @@ router.get("/:id", async (req, res) => {
       buyerAddress: it.buyerAddress || null,
       buyerTaxId: it.buyerTaxId || null,
 
+      grossProfit: toNumber(it.grossProfit),
+      netProfit: toNumber(it.netProfit),
+
       createdAt: it.createdAt,
       updatedAt: it.updatedAt,
     });
   } catch (err) {
     console.error("GET /api/inventory/:id error:", err);
-    res.status(500).json({ message: "ไม่สามารถดึงรายละเอียดสินค้าได้", error: String(err) });
+    res.status(500).json({
+      message: "ไม่สามารถดึงรายละเอียดสินค้าได้",
+      error: String(err),
+    });
   }
 });
 
@@ -141,7 +159,7 @@ router.get("/:id", async (req, res) => {
 router.post("/:id/sell", async (req, res) => {
   try {
     const id = Number(req.params.id);
-    if (!id) return res.status(400).json({ message: "id ไม่ถูกต้อง" });
+    if (!Number.isFinite(id)) return res.status(400).json({ message: "id ไม่ถูกต้อง" });
 
     const {
       sellingPrice,
@@ -162,7 +180,6 @@ router.post("/:id/sell", async (req, res) => {
       return res.status(400).json({ message: "sellingPrice ต้องมากกว่า 0" });
     }
 
-    // ใช้ transaction กัน race-condition / ตัดสต๊อกให้ถูก
     const result = await prisma.$transaction(async (tx) => {
       const item = await tx.inventoryItem.findUnique({
         where: { id },
@@ -170,11 +187,17 @@ router.post("/:id/sell", async (req, res) => {
           id: true,
           name: true,
           code: true,
-          cost: true,
+          serial: true,
           status: true,
+          sourceType: true,
+
+          cost: true,
           quantity: true,
           quantityAvailable: true,
           quantitySold: true,
+
+          grossProfit: true,
+          netProfit: true,
         },
       });
 
@@ -187,11 +210,12 @@ router.post("/:id/sell", async (req, res) => {
       const available = Number(item.quantityAvailable ?? 0);
       const sold = Number(item.quantitySold ?? 0);
 
-      if (available <= 0) {
+      if (available <= 0 || item.status === "SOLD") {
         const e = new Error("OUT_OF_STOCK");
         e.code = "OUT_OF_STOCK";
         throw e;
       }
+
       if (qty > available) {
         const e = new Error("QTY_EXCEED");
         e.code = "QTY_EXCEED";
@@ -202,11 +226,24 @@ router.post("/:id/sell", async (req, res) => {
       const newAvailable = available - qty;
       const newSold = sold + qty;
 
-      const status = newAvailable === 0 ? "SOLD" : "IN_STOCK";
+      const nextStatus = newAvailable === 0 ? "SOLD" : (item.status || "IN_STOCK");
 
-      // profit = (ขาย - ทุน) * qty (ถ้ามีทุน)
-      const costNum = toNumber(item.cost);
-      const profit = costNum > 0 ? (price - costNum) * qty : 0;
+      // ✅ ต้นทุนต่อหน่วย:
+      // - ถ้า quantity > 1 และ cost ดูเหมือนเป็นต้นทุนรวม → เฉลี่ยต่อหน่วย
+      // - ถ้า quantity = 1 → cost เป็นต่อชิ้นอยู่แล้ว
+      const totalQty = Math.max(Number(item.quantity ?? 1), 1);
+      const totalCost = toNumber(item.cost);
+      const unitCost =
+        totalQty > 1 && totalCost > 0 ? totalCost / totalQty : totalCost;
+
+      // ✅ กำไรของการขายครั้งนี้ (ต่อหน่วย)
+      const profitThisSale = (price - unitCost) * qty;
+
+      // ✅ สะสมกำไร (อย่าเขียนทับ)
+      const prevGross = toNumber(item.grossProfit);
+      const prevNet = toNumber(item.netProfit);
+      const grossProfitTotal = prevGross + profitThisSale;
+      const netProfitTotal = prevNet + profitThisSale;
 
       const updated = await tx.inventoryItem.update({
         where: { id },
@@ -214,15 +251,15 @@ router.post("/:id/sell", async (req, res) => {
           sellingPrice: price,
           quantityAvailable: newAvailable,
           quantitySold: newSold,
-          status,
+          status: nextStatus,
 
           buyerName: buyerName ?? null,
           buyerPhone: buyerPhone ?? null,
           buyerAddress: buyerAddress ?? null,
           buyerTaxId: buyerTaxId ?? null,
 
-          grossProfit: profit,
-          netProfit: profit,
+          grossProfit: grossProfitTotal,
+          netProfit: netProfitTotal,
         },
       });
 
@@ -232,7 +269,7 @@ router.post("/:id/sell", async (req, res) => {
           type: "IN",
           category: "INVENTORY_SALE",
           amount: price * qty,
-          profit: profit,
+          profit: profitThisSale,
           inventoryItemId: item.id,
           description: `ขายสินค้า ${item.name} (${item.code}) จำนวน ${qty} ชิ้น`,
         },
@@ -241,7 +278,6 @@ router.post("/:id/sell", async (req, res) => {
       return updated;
     });
 
-    // ส่งกลับแบบ friendly ต่อ frontend
     res.json({
       id: result.id,
       code: result.code,
@@ -264,13 +300,15 @@ router.post("/:id/sell", async (req, res) => {
       buyerAddress: result.buyerAddress || null,
       buyerTaxId: result.buyerTaxId || null,
 
+      grossProfit: toNumber(result.grossProfit),
+      netProfit: toNumber(result.netProfit),
+
       createdAt: result.createdAt,
       updatedAt: result.updatedAt,
     });
   } catch (err) {
     console.error("POST /api/inventory/:id/sell error:", err);
 
-    // error mapping (จาก transaction)
     if (err?.code === "NOT_FOUND" || String(err?.message) === "NOT_FOUND") {
       return res.status(404).json({ message: "ไม่พบสินค้า" });
     }

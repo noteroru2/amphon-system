@@ -56,21 +56,38 @@ function normalizeFeeConfig(raw) {
 // ------- helper: สร้าง inventory item จากสัญญา -------
 
 async function createInventoryFromForfeitContract(contract, principal) {
-  // principal = principal ณ วันที่ตัดหลุด
+  // -------- 1) กันสร้างซ้ำ --------
+  const existed = await prisma.inventoryItem.findFirst({
+    where: {
+      sourceType: "FORFEIT",
+      sourceContractId: contract.id,
+    },
+  });
+  if (existed) return existed;
+
+  // -------- 2) เตรียมข้อมูลทรัพย์ --------
   const itemTitle =
     contract.assetModel ||
     contract.itemTitle ||
     `ทรัพย์จากสัญญา ${contract.code}`;
 
   const itemSerial = contract.assetSerial || contract.itemSerial || "";
-  const itemCondition =
-    contract.assetCondition || contract.itemCondition || "";
+  const itemCondition = contract.assetCondition || contract.itemCondition || "";
   const itemAccessories =
     contract.assetAccessories || contract.itemAccessories || "";
   const storageLocation = contract.storageCode || null;
 
+  const cost = Number(principal ?? 0);
+
+  // -------- 3) คำนวณราคาขายเป้าหมาย --------
+  const feeTotal = Number(contract?.feeConfig?.total ?? 0);
+
+  // ราคาขายเป้าหมาย = ทุน + ค่าบริการที่ควรได้
+  const targetPrice = Math.max(cost + feeTotal, cost);
+
   const code = await getNextInventoryCode();
 
+  // -------- 4) สร้าง Inventory --------
   const created = await prisma.inventoryItem.create({
     data: {
       code,
@@ -86,16 +103,31 @@ async function createInventoryFromForfeitContract(contract, principal) {
       sourceContractCode: contract.code,
 
       // การเงิน
-      cost: principal,
+      cost,
+      targetPrice,
+
+      // สต๊อก
+      status: "IN_STOCK",
       quantity: 1,
       quantityAvailable: 1,
       quantitySold: 0,
     },
   });
 
-  console.log("[Inventory] created from forfeit:", created.id, created.name);
+  console.log(
+    "[Inventory] created from forfeit:",
+    created.code,
+    created.name,
+    "cost:",
+    cost,
+    "target:",
+    targetPrice
+  );
+
   return created;
 }
+
+
 
 
 // สร้างรหัสสินค้าในคลังแบบง่าย ๆ เช่น INV-0001, INV-0002 ...
