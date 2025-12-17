@@ -11,15 +11,20 @@ type InventoryItemRow = {
   serial?: string | null;
   status: string;
   sourceType: string;
-  cost: number; // อาจเป็น "ต้นทุนรวม" หรือ "ต่อชิ้น" แล้วแต่ระบบ
+  cost: number;
   targetPrice: number;
   sellingPrice: number;
   quantityAvailable: number;
-  quantity?: number; // ✅ เผื่อ backend ส่งมาด้วย
+  quantity?: number;
   createdAt: string;
 };
 
 type TabKey = "ALL" | "READY" | "SOLD";
+
+// ✅ API base (prod ต้องชี้ไป backend)
+const API_BASE =
+  (import.meta as any).env?.VITE_API_URL?.replace(/\/+$/, "") ||
+  "https://amphon-backend.onrender.com";
 
 // ✅ normalize status ฝั่งหน้า (กันกรณี backend ส่ง status ไม่สอดคล้องกับ qty)
 const normalizeRowStatus = (it: InventoryItemRow) => {
@@ -61,9 +66,14 @@ const InventoryPage: React.FC = () => {
   const fetchInventory = async () => {
     try {
       setLoading(true);
-      const res = await axios.get("/api/inventory");
 
-      // ✅ normalize ให้เป็น array เสมอ
+      // ✅ ยิงไป backend render ตรง ๆ (กันไปโดเมน vercel เอง)
+      // ✅ ใส่ t= กัน cache 304
+      const url = `${API_BASE}/api/inventory?t=${Date.now()}`;
+      const res = await axios.get(url, {
+        headers: { "Cache-Control": "no-cache" },
+      });
+
       const list = arrayFromApi<InventoryItemRow>(res.data);
       setItems(Array.isArray(list) ? list : []);
     } catch (err) {
@@ -123,12 +133,16 @@ const InventoryPage: React.FC = () => {
             <p className="text-sm text-slate-500">
               จัดการสต๊อกสินค้า เตรียมพร้อมขาย และพิมพ์ใบเสร็จทีหลัง
             </p>
+
+            {/* ✅ ช่วย debug ว่าชี้ API ถูกตัว */}
+            <p className="mt-1 text-xs text-slate-400">
+              API: <span className="font-mono">{API_BASE}</span>
+            </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
-              // ✅ FIX: ให้เป็น /app/... เหมือนหน้าอื่น
               onClick={() => navigate("/app/intake/new")}
               className="rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50"
             >
@@ -136,11 +150,17 @@ const InventoryPage: React.FC = () => {
             </button>
             <button
               type="button"
-              // ✅ FIX: ให้เป็น /app/... เหมือนหน้าอื่น
               onClick={() => navigate("/app/inventory/bulk-sell")}
               className="rounded-full bg-blue-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-blue-700"
             >
               เปิดบิลหลายชิ้น
+            </button>
+            <button
+              type="button"
+              onClick={fetchInventory}
+              className="rounded-full bg-slate-700 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-slate-800"
+            >
+              รีเฟรช
             </button>
           </div>
         </div>
@@ -221,10 +241,11 @@ const InventoryPage: React.FC = () => {
                 const stKey = normalizeRowStatus(item);
                 const st = statusLabel(stKey);
 
-                // ✅ ทุนต่อหน่วย (ถ้ามี quantity และ cost เป็นรวม)
                 const qtyTotal = Math.max(Number(item.quantity ?? 1), 1);
                 const unitCost =
-                  qtyTotal > 1 ? Number(item.cost ?? 0) / qtyTotal : Number(item.cost ?? 0);
+                  qtyTotal > 1
+                    ? Number(item.cost ?? 0) / qtyTotal
+                    : Number(item.cost ?? 0);
 
                 const showSellPrice =
                   Number(item.sellingPrice ?? 0) > 0
@@ -232,7 +253,9 @@ const InventoryPage: React.FC = () => {
                     : Number(item.targetPrice ?? 0);
 
                 const disabledSell =
-                  stKey === "SOLD" || stKey === "SOLD_OUT" || (item.quantityAvailable ?? 0) <= 0;
+                  stKey === "SOLD" ||
+                  stKey === "SOLD_OUT" ||
+                  (item.quantityAvailable ?? 0) <= 0;
 
                 return (
                   <div
@@ -292,7 +315,6 @@ const InventoryPage: React.FC = () => {
                     <div className="col-span-1 text-right">
                       <button
                         type="button"
-                        // ✅ FIX: ให้เป็น /app/... เหมือนระบบหลัก
                         onClick={() => navigate(`/app/inventory/sell/${item.id}`)}
                         className="rounded-md bg-blue-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:bg-blue-700 disabled:opacity-60"
                         disabled={disabledSell}
