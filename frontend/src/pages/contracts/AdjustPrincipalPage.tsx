@@ -1,11 +1,19 @@
 // src/pages/contracts/AdjustPrincipalPage.tsx
 import React, { useEffect, useMemo, useState, FormEvent } from "react";
 import { useParams, useNavigate, Link } from "react-router-dom";
-import axios from "axios";
+import { apiFetch } from "../../lib/api";
 import { getFinancialFromContract } from "../../utils/contractFinancial";
 import { calculateFee } from "../../utils/feeCalculator";
 
-type Contract = any;
+type Contract = {
+  id: number;
+  code: string;
+  principal?: number;
+  termDays?: number;
+  feeConfig?: {
+    total?: number;
+  };
+};
 
 const money = (v: any) => {
   const n = Number(v ?? 0);
@@ -24,6 +32,7 @@ export const AdjustPrincipalPage: React.FC = () => {
 
   const [cutAmount, setCutAmount] = useState<number>(0);
 
+  // ---------- load contract ----------
   useEffect(() => {
     if (!id) return;
 
@@ -32,10 +41,7 @@ export const AdjustPrincipalPage: React.FC = () => {
         setLoading(true);
         setErrorMsg(null);
 
-        const res = await axios.get(`/api/contracts/${id}`);
-        // ✅ กันรูปแบบ payload: contract / {data: contract}
-        const c = (res.data && (res.data.data || res.data)) ?? null;
-
+        const c = await apiFetch<Contract>(`/contracts/${id}`);
         setContract(c);
         setCutAmount(0);
       } catch (err) {
@@ -49,13 +55,19 @@ export const AdjustPrincipalPage: React.FC = () => {
     fetchContract();
   }, [id]);
 
-  const fin = useMemo(() => getFinancialFromContract(contract), [contract]);
+  const fin = useMemo(
+    () => getFinancialFromContract(contract),
+    [contract]
+  );
 
-  const newPrincipal = Math.max((fin.principal || 0) - (cutAmount || 0), 0);
+  const principalBefore = fin.principal || 0;
+  const termDays = fin.termDays || 15;
+
+  const newPrincipal = Math.max(principalBefore - (cutAmount || 0), 0);
 
   const newFee = useMemo(
-    () => calculateFee(newPrincipal, fin.termDays || 15),
-    [newPrincipal, fin.termDays]
+    () => calculateFee(newPrincipal, termDays),
+    [newPrincipal, termDays]
   );
 
   const handleSubmit = async (e: FormEvent) => {
@@ -69,26 +81,26 @@ export const AdjustPrincipalPage: React.FC = () => {
       alert("ไม่พบข้อมูลสัญญา");
       return;
     }
-    if (cutAmount > (fin.principal || 0)) {
+    if (cutAmount > principalBefore) {
       alert("จำนวนที่ต้องการตัดมากกว่าวงเงินปัจจุบัน");
       return;
     }
 
     const ok = window.confirm(
-      `ยืนยันตัดต้น ${cutAmount.toLocaleString("th-TH")} บาท จากสัญญา ${
-        contract.code
-      } ใช่หรือไม่?\n` + `หลังจากนี้ principal จะลดลง และระบบจะลง Cashbook ทันที`
+      `ยืนยันตัดต้น ${money(cutAmount)} บาท จากสัญญา ${contract.code} ใช่หรือไม่?\n\n` +
+        `หลังจากนี้ principal จะลดลง และระบบจะบันทึก Cashbook ทันที`
     );
     if (!ok) return;
 
     try {
       setSubmitting(true);
 
-      const payload = { cutAmount };
+      await apiFetch(`/contracts/${id}/cut-principal`, {
+        method: "POST",
+        body: JSON.stringify({ cutAmount }),
+      });
 
-      await axios.post(`/api/contracts/${id}/cut-principal`, payload);
-
-      // ✅ FIX: กลับไปหน้ารายละเอียดต้องเป็น /app/...
+      // กลับไปหน้ารายละเอียดสัญญา
       navigate(`/app/contracts/${id}`);
     } catch (err) {
       console.error("ตัดต้นไม่สำเร็จ", err);
@@ -100,7 +112,9 @@ export const AdjustPrincipalPage: React.FC = () => {
 
   if (loading) {
     return (
-      <div className="p-4 text-xs text-slate-500">กำลังโหลดข้อมูลสัญญา...</div>
+      <div className="p-4 text-xs text-slate-500">
+        กำลังโหลดข้อมูลสัญญา...
+      </div>
     );
   }
 
@@ -121,70 +135,60 @@ export const AdjustPrincipalPage: React.FC = () => {
             ตัดทุนประกัน (Cut Principal)
           </h1>
           <p className="text-xs text-slate-500">
-            เลขที่สัญญา: {contract.code || "-"}
+            เลขที่สัญญา: {contract.code}
           </p>
         </div>
 
-        {/* ✅ FIX: ลิงก์ต้องเป็น /app/... */}
         <Link
           to={`/app/contracts/${contract.id}`}
-          className="rounded-full border border-slate-300 px-3 py-1.5 text-xs text-slate-700 hover:bg-slate-50"
+          className="rounded-full border px-3 py-1.5 text-xs"
         >
-          ← กลับไปหน้ารายละเอียด
+          ← กลับหน้ารายละเอียด
         </Link>
       </div>
 
       <form onSubmit={handleSubmit} className="grid gap-4 lg:grid-cols-3">
-        {/* ซ้าย: สรุปทุนเดิม + ตัดต้น */}
+        {/* ซ้าย */}
         <div className="space-y-4 lg:col-span-2">
           <section className="rounded-2xl bg-white p-4 shadow-sm text-xs">
-            <h2 className="mb-2 text-sm font-semibold text-slate-800">
-              1. ทุนเดิม และรายละเอียดสัญญา
+            <h2 className="mb-2 text-sm font-semibold">
+              ทุนเดิมของสัญญา
             </h2>
             <div className="grid gap-3 md:grid-cols-2">
               <div>
-                <div className="text-[11px] text-slate-500">วงเงินประกันเดิม</div>
-                <div className="font-semibold text-slate-900">
-                  {money(fin.principal)} ฿
+                <div className="text-[11px] text-slate-500">วงเงินเดิม</div>
+                <div className="font-semibold">
+                  {money(principalBefore)} ฿
                 </div>
               </div>
               <div>
-                <div className="text-[11px] text-slate-500">ระยะเวลาฝาก</div>
-                <div className="font-semibold text-slate-900">
-                  {fin.termDays} วัน
-                </div>
-              </div>
-              <div>
-                <div className="text-[11px] text-slate-500">ค่าบริการรอบนี้ (เดิม)</div>
-                <div className="font-semibold text-slate-900">
-                  {money(fin.fee?.total)} ฿
-                </div>
+                <div className="text-[11px] text-slate-500">ระยะเวลา</div>
+                <div className="font-semibold">{termDays} วัน</div>
               </div>
             </div>
           </section>
 
           <section className="rounded-2xl bg-white p-4 shadow-sm text-xs">
-            <h2 className="mb-2 text-sm font-semibold text-slate-800">
-              2. ระบุจำนวนตัดทุน
+            <h2 className="mb-2 text-sm font-semibold">
+              ระบุจำนวนตัดต้น
             </h2>
             <div className="grid gap-3 md:grid-cols-2">
               <div>
                 <label className="text-[11px] text-slate-600">
-                  จำนวนที่ต้องการตัดทุน (บาท)
+                  จำนวนเงินที่ตัด (บาท)
                 </label>
                 <input
                   type="number"
                   value={cutAmount || ""}
-                  onChange={(e) => setCutAmount(Number(e.target.value || 0))}
-                  className="mt-1 w-full rounded-xl border border-slate-300 px-3 py-2 text-xs outline-none focus:border-red-500 focus:ring-1 focus:ring-red-500"
+                  onChange={(e) =>
+                    setCutAmount(Number(e.target.value || 0))
+                  }
+                  className="mt-1 w-full rounded-xl border px-3 py-2 text-xs"
                 />
-                <div className="mt-1 text-[10px] text-slate-400">
-                  เมื่อตัดทุนแล้ว ลูกค้าจะได้รับเงินจำนวนนี้คืนไป
-                </div>
               </div>
               <div>
-                <div className="text-[11px] text-slate-600 mb-1">
-                  ทุนใหม่หลังตัด (New Principal)
+                <div className="text-[11px] text-slate-600">
+                  ทุนใหม่หลังตัด
                 </div>
                 <div className="text-xl font-semibold text-emerald-600">
                   {money(newPrincipal)} ฿
@@ -194,45 +198,31 @@ export const AdjustPrincipalPage: React.FC = () => {
           </section>
         </div>
 
-        {/* ขวา: เปรียบเทียบค่าบริการเดิม/ใหม่ */}
+        {/* ขวา */}
         <aside>
-          <section className="sticky top-4 rounded-2xl bg-slate-900 p-4 text-slate-50 shadow-lg text-xs">
-            <h2 className="mb-3 text-sm font-semibold">เปรียบเทียบค่าบริการ</h2>
+          <section className="sticky top-4 rounded-2xl bg-slate-900 p-4 text-slate-50 text-xs">
+            <h2 className="mb-3 text-sm font-semibold">
+              เปรียบเทียบค่าบริการ
+            </h2>
 
-            <div className="space-y-3">
-              <div className="rounded-xl bg-slate-800 p-3">
-                <div className="mb-1 text-[11px] text-slate-300">เดิม (ก่อนตัดทุน)</div>
-                <div className="flex justify-between text-[11px]">
-                  <span>ค่าบริการรวม</span>
-                  <span>{money(fin.fee?.total)} ฿</span>
-                </div>
+            <div className="space-y-2">
+              <div className="flex justify-between">
+                <span>ค่าบริการเดิม</span>
+                <span>{money(fin.fee?.total)} ฿</span>
               </div>
-
-              <div className="rounded-xl bg-slate-800 p-3">
-                <div className="mb-1 text-[11px] text-slate-300">ใหม่ (หลังตัดทุน)</div>
-                <div className="flex justify-between text-[11px]">
-                  <span>ค่าบริการรวม</span>
-                  <span>{money(newFee.total)} ฿</span>
-                </div>
+              <div className="flex justify-between">
+                <span>ค่าบริการใหม่</span>
+                <span>{money(newFee.total)} ฿</span>
               </div>
-
-              <div className="rounded-xl bg-slate-50 p-3 text-slate-900">
-                <div className="text-[11px] text-slate-500">
-                  ลูกค้าได้รับเงินคืน (จากการตัดทุน)
-                </div>
-                <div className="mt-1 text-xl font-semibold text-emerald-600">
-                  {money(cutAmount)} ฿
-                </div>
-              </div>
-
-              <button
-                type="submit"
-                disabled={submitting}
-                className="mt-2 w-full rounded-xl bg-red-600 px-3 py-2 text-sm font-medium text-white hover:bg-red-700 disabled:opacity-60"
-              >
-                {submitting ? "กำลังบันทึกการตัดทุน..." : "ยืนยันตัดทุนและบันทึก"}
-              </button>
             </div>
+
+            <button
+              type="submit"
+              disabled={submitting}
+              className="mt-3 w-full rounded-xl bg-red-600 py-2 text-sm text-white disabled:opacity-60"
+            >
+              {submitting ? "กำลังบันทึก..." : "ยืนยันตัดต้น"}
+            </button>
           </section>
         </aside>
       </form>
