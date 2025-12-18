@@ -1,11 +1,64 @@
-// src/lib/api.ts
-import axios from "axios";
+// frontend/src/lib/api.ts
+import axios, { AxiosRequestConfig } from "axios";
 
-const baseURL =
-  import.meta.env.VITE_API_URL?.replace(/\/+$/, "") ||
+// ตั้ง base URL จาก env (Vercel) หรือ fallback ไป backend ที่ Render
+export const API_BASE_URL =
+  (import.meta as any)?.env?.VITE_API_URL?.replace(/\/+$/, "") ||
   "https://amphon-backend.onrender.com";
 
+// ✅ axios instance (ใช้กับโค้ดที่ผมแก้ให้)
 export const api = axios.create({
-  baseURL,
+  baseURL: API_BASE_URL,
   withCredentials: false,
 });
+
+// ✅ ของเดิมในโปรเจกต์คุณ: apiFetch (กันไฟล์อื่นล่ม)
+export async function apiFetch<T = any>(
+  path: string,
+  options: RequestInit = {}
+): Promise<T> {
+  const url = path.startsWith("http")
+    ? path
+    : `${API_BASE_URL}${path.startsWith("/") ? "" : "/"}${path}`;
+
+  const res = await fetch(url, {
+    ...options,
+    headers: {
+      "Content-Type": "application/json",
+      ...(options.headers || {}),
+    },
+  });
+
+  // พยายาม parse json เสมอ
+  const text = await res.text();
+  let data: any = null;
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = text;
+  }
+
+  if (!res.ok) {
+    const msg =
+      (data && (data.message || data.error)) ||
+      `Request failed: ${res.status}`;
+    throw new Error(msg);
+  }
+
+  return data as T;
+}
+
+// (optional) helper ถ้าบางไฟล์ใช้รูปแบบ config
+export async function apiFetchWithConfig<T = any>(
+  path: string,
+  config?: AxiosRequestConfig
+): Promise<T> {
+  const r = await api.request<T>({
+    url: path,
+    method: config?.method || "GET",
+    data: (config as any)?.data,
+    params: config?.params,
+    headers: config?.headers,
+  });
+  return r.data;
+}
