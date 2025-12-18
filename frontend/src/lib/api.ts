@@ -17,9 +17,16 @@ export async function apiFetch<T = any>(
   path: string,
   options: RequestInit = {}
 ): Promise<T> {
-  const url = path.startsWith("http")
-    ? path
-    : `${API_BASE_URL}${path.startsWith("/") ? "" : "/"}${path}`;
+  const p = String(path || "");
+
+  // ✅ ทำให้ path เป็น /api/... เสมอ
+  const normalizedPath = p.startsWith("/api/")
+    ? p
+    : p.startsWith("/")
+      ? `/api${p}`
+      : `/api/${p}`;
+
+  const url = `${API_BASE_URL}${normalizedPath}`;
 
   const res = await fetch(url, {
     ...options,
@@ -29,7 +36,6 @@ export async function apiFetch<T = any>(
     },
   });
 
-  // พยายาม parse json เสมอ
   const text = await res.text();
   let data: any = null;
   try {
@@ -47,6 +53,7 @@ export async function apiFetch<T = any>(
 
   return data as T;
 }
+
 
 // (optional) helper ถ้าบางไฟล์ใช้รูปแบบ config
 export async function apiFetchWithConfig<T = any>(
