@@ -214,7 +214,7 @@ const receiptItems = payloadItems.map((p) => {
 
   return {
     id: p.id,
-    title: `${it?.name || "-"} x${p.quantity}`,
+    title: it?.name || "-",
     serial: it?.serial || undefined,
     unitPrice: Number(p.sellingPrice ?? 0),     // ✅ ราคาต่อชิ้น
     quantity: Math.max(1, Number(p.quantity)),  // ✅ จำนวนที่ขาย

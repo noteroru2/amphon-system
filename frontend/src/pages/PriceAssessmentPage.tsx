@@ -1,5 +1,5 @@
 import React, { useMemo, useState } from "react";
-import axios from "axios";
+import { api } from "../../lib/api";
 
 type AiPriceResult = {
   appraisedMin: number;
@@ -30,7 +30,7 @@ type AiPriceResult = {
 type ConditionKey = "90_95" | "80_89" | "70_79" | "UNKNOWN";
 type AccessoriesKey = "FULL_BOX" | "BODY_ONLY" | "WITH_CHARGER" | "UNKNOWN";
 
-const fmtMoney = (n: number) => (Number(n || 0).toLocaleString("th-TH") + " ฿");
+const fmtMoney = (n: number) => Number(n || 0).toLocaleString("th-TH") + " ฿";
 
 function roundTo100(n: number) {
   if (!Number.isFinite(n)) return 0;
@@ -43,31 +43,66 @@ function clamp(n: number, min: number, max: number) {
 
 /**
  * Policy ของร้าน (ปรับได้)
- * - SELL: ใช้ targetPrice เป็นหลัก
- * - BUY OUT: อิงจาก SELL * (0.50-0.65) แล้วปรับตามสภาพ/อุปกรณ์
- * - PAWN: อิงจาก BUY OUT * (0.70-0.85)
  */
 function getPolicy(condition: ConditionKey, accessories: AccessoriesKey) {
   const conditionFactor =
-    condition === "90_95" ? 1.0 : condition === "80_89" ? 0.92 : condition === "70_79" ? 0.82 : 0.88;
+    condition === "90_95"
+      ? 1.0
+      : condition === "80_89"
+      ? 0.92
+      : condition === "70_79"
+      ? 0.82
+      : 0.88;
 
   const accessoriesFactor =
-    accessories === "FULL_BOX" ? 1.0 : accessories === "WITH_CHARGER" ? 0.96 : accessories === "BODY_ONLY" ? 0.90 : 0.95;
+    accessories === "FULL_BOX"
+      ? 1.0
+      : accessories === "WITH_CHARGER"
+      ? 0.96
+      : accessories === "BODY_ONLY"
+      ? 0.9
+      : 0.95;
 
-  // BUY OUT ratio (from SELL)
-  const buyRatioBase = 0.55; // ให้ใกล้เคียงตัวอย่างในรูป: sell ~ 11,000 => buy ~ 6,000
-  const buyRatio = clamp(buyRatioBase * conditionFactor * accessoriesFactor, 0.45, 0.70);
+  const buyRatioBase = 0.55;
+  const buyRatio = clamp(buyRatioBase * conditionFactor * accessoriesFactor, 0.45, 0.7);
 
-  // PAWN ratio (from BUY OUT)
-  const pawnRatioBase = 0.75; // buy 6,000 => pawn 4,500
-  const pawnRatio = clamp(pawnRatioBase * conditionFactor, 0.60, 0.85);
+  const pawnRatioBase = 0.75;
+  const pawnRatio = clamp(pawnRatioBase * conditionFactor, 0.6, 0.85);
 
-  // ค่าบริการฝาก (ตัวอย่างตาม UI ในรูป)
   const pawnFee15Days = 400;
   const docAndStorage = 300;
   const careFee = 100;
 
   return { buyRatio, pawnRatio, pawnFee15Days, docAndStorage, careFee };
+}
+
+function normalizeAiResponse(raw: any): AiPriceResult {
+  // รองรับ backend ส่ง { ok, data } หรือส่ง object ตรง ๆ
+  const d = raw?.data ?? raw;
+  if (d?.ok === false) {
+    throw new Error(d?.message || "AI response not ok");
+  }
+  const x = d?.data ?? d;
+
+  return {
+    appraisedMin: Number(x?.appraisedMin ?? 0),
+    appraisedMax: Number(x?.appraisedMax ?? 0),
+    appraisedPrice: Number(x?.appraisedPrice ?? 0),
+    targetPrice: Number(x?.targetPrice ?? 0),
+    confidence: Number(x?.confidence ?? 0),
+    rationale: String(x?.rationale ?? ""),
+    refs: Array.isArray(x?.refs) ? x.refs : [],
+    stats: x?.stats
+      ? {
+          similarCount: Number(x.stats.similarCount ?? 0),
+          basedOn: String(x.stats.basedOn ?? ""),
+          medianPrice: Number(x.stats.medianPrice ?? 0),
+          costMedian: Number(x.stats.costMedian ?? 0),
+          floor: x.stats.floor == null ? null : Number(x.stats.floor),
+          ceil: x.stats.ceil == null ? null : Number(x.stats.ceil),
+        }
+      : undefined,
+  };
 }
 
 export default function PriceAssessmentPage() {
@@ -83,7 +118,6 @@ export default function PriceAssessmentPage() {
   const policy = useMemo(() => getPolicy(condition, accessories), [condition, accessories]);
 
   const computed = useMemo(() => {
-    // ถ้ายังไม่มี AI ให้โชว์ 0
     if (!ai) {
       return {
         pawn: 0,
@@ -107,10 +141,14 @@ export default function PriceAssessmentPage() {
         ? `${Number(marketMin).toLocaleString("th-TH")} - ${Number(marketMax).toLocaleString("th-TH")}`
         : "-";
 
-    // Reference: ใช้ refs ถ้ามี (โชว์ “มีของคล้ายในระบบกี่รายการ” หรือ “เลิกผลิตแล้ว”)
-    let refText = "เลิกผลิตแล้ว";
+    let refText = "ยังไม่มีข้อมูลอ้างอิงในระบบ";
     if (ai.stats?.similarCount && ai.stats.similarCount > 0) {
-      const basedOn = ai.stats.basedOn === "sellingPrice" ? "ราคาขายจริง" : ai.stats.basedOn === "targetPrice" ? "ราคาตั้งขาย" : "ข้อมูลภายใน";
+      const basedOn =
+        ai.stats.basedOn === "sellingPrice"
+          ? "ราคาขายจริง"
+          : ai.stats.basedOn === "targetPrice"
+          ? "ราคาตั้งขาย"
+          : "ข้อมูลภายใน";
       refText = `อ้างอิงจากของคล้ายในระบบ ${ai.stats.similarCount} รายการ (${basedOn})`;
     }
 
@@ -131,18 +169,40 @@ export default function PriceAssessmentPage() {
       setLoading(true);
       setAi(null);
 
-      // ส่งข้อมูลให้ AI (ปรับ field ได้ตามที่คุณใช้จริง)
-      const res = await axios.post("/api/ai/price-suggest", {
+      const payload = {
         name: modelText,
         condition:
-          condition === "90_95" ? "สภาพ 90-95%" : condition === "80_89" ? "สภาพ 80-89%" : condition === "70_79" ? "สภาพ 70-79%" : "ไม่ระบุ",
+          condition === "90_95"
+            ? "สภาพ 90-95%"
+            : condition === "80_89"
+            ? "สภาพ 80-89%"
+            : condition === "70_79"
+            ? "สภาพ 70-79%"
+            : "ไม่ระบุ",
         accessories:
-          accessories === "FULL_BOX" ? "ครบกล่อง" : accessories === "WITH_CHARGER" ? "มีสายชาร์จ" : accessories === "BODY_ONLY" ? "ตัวเครื่องอย่างเดียว" : "ไม่ระบุ",
+          accessories === "FULL_BOX"
+            ? "ครบกล่อง"
+            : accessories === "WITH_CHARGER"
+            ? "มีสายชาร์จ"
+            : accessories === "BODY_ONLY"
+            ? "ตัวเครื่องอย่างเดียว"
+            : "ไม่ระบุ",
         notes: "",
         desiredMarginPct: 10,
+        // ✅ ช่วยให้ backend ใช้เป็น policy ได้ถ้าคุณอยากรองรับในอนาคต
+        policy: {
+          buyRatio: policy.buyRatio,
+          pawnRatio: policy.pawnRatio,
+        },
+      };
+
+      // ✅ ยิงผ่าน api ของเรา (ชี้ไป backend Render/VPS)
+      const res = await api.post("/api/ai/price-suggest", payload, {
+        headers: { "Content-Type": "application/json" },
       });
 
-      setAi(res.data);
+      const normalized = normalizeAiResponse(res.data);
+      setAi(normalized);
     } catch (e: any) {
       console.error(e);
       setErr(e?.response?.data?.message || e?.message || "วิเคราะห์ราคาไม่สำเร็จ");
@@ -156,7 +216,9 @@ export default function PriceAssessmentPage() {
       <div className="mx-auto max-w-6xl px-6 py-8">
         <div className="mb-4">
           <div className="text-3xl font-bold text-slate-900">ประเมินราคาสินค้า (AI Price Check)</div>
-          <div className="mt-1 text-sm text-slate-500">ช่วยวิเคราะห์ราคาตลาดและแนะนำราคารับซื้อ/จำนำ โดย AI</div>
+          <div className="mt-1 text-sm text-slate-500">
+            วิเคราะห์จาก AI + อ้างอิงข้อมูลในระบบจริง (ถ้ามี refs)
+          </div>
         </div>
 
         {err ? (
@@ -166,7 +228,7 @@ export default function PriceAssessmentPage() {
         ) : null}
 
         <div className="grid gap-4 lg:grid-cols-12">
-          {/* LEFT: input card */}
+          {/* LEFT */}
           <div className="lg:col-span-4">
             <div className="rounded-2xl bg-white p-6 shadow">
               <div className="text-sm font-semibold text-slate-800">ชื่อสินค้า / รุ่น (Model)</div>
@@ -211,20 +273,17 @@ export default function PriceAssessmentPage() {
             </div>
 
             <div className="mt-4 rounded-2xl bg-white p-5 text-xs text-slate-500 shadow">
-              หมายเหตุ: ราคาเป็นเพียงการประเมินจากข้อมูล AI อาจไม่ตรงกับราคาจริงหน้าร้าน 100%
-              ควรตรวจสอบสภาพจริงประกอบการตัดสินใจ
+              หมายเหตุ: ราคาเป็นการประเมินจาก AI + อ้างอิงข้อมูลในระบบ (refs) ถ้ามี
             </div>
           </div>
 
-          {/* RIGHT: result area */}
+          {/* RIGHT */}
           <div className="lg:col-span-8">
-            {/* top cards */}
             <div className="grid gap-4 md:grid-cols-3">
-              {/* PAWN */}
               <div className="rounded-2xl border border-amber-200 bg-amber-50 p-5 shadow">
                 <div className="text-sm font-semibold text-amber-700">แนะนำรับฝาก (PAWN)</div>
                 <div className="mt-2 text-4xl font-extrabold text-amber-700">{fmtMoney(computed.pawn)}</div>
-                <div className="mt-1 text-xs text-amber-700/80">ปลอดภัย ต่ำกว่าราคาซื้อเข้า 10-20%</div>
+                <div className="mt-1 text-xs text-amber-700/80">ระบบคำนวณจาก policy + ราคา AI</div>
                 <div className="my-3 h-px bg-amber-200" />
                 <div className="text-sm font-semibold text-amber-800">
                   ค่าบริการ (15 วัน): {policy.pawnFee15Days.toLocaleString("th-TH")} บาท
@@ -237,14 +296,12 @@ export default function PriceAssessmentPage() {
                 </div>
               </div>
 
-              {/* BUY OUT */}
               <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5 shadow">
                 <div className="text-sm font-semibold text-emerald-700">แนะนำรับซื้อ (BUY OUT)</div>
                 <div className="mt-2 text-4xl font-extrabold text-emerald-700">{fmtMoney(computed.buy)}</div>
-                <div className="mt-1 text-xs text-emerald-700/80">สำหรับซื้อขาด (ทำกำไรต่อได้)</div>
+                <div className="mt-1 text-xs text-emerald-700/80">สำหรับซื้อขาด</div>
               </div>
 
-              {/* SELL */}
               <div className="rounded-2xl border border-blue-200 bg-blue-50 p-5 shadow">
                 <div className="text-sm font-semibold text-blue-700">ราคาขายหน้าร้าน (SELL)</div>
                 <div className="mt-2 text-4xl font-extrabold text-blue-700">{fmtMoney(computed.sell)}</div>
@@ -252,39 +309,29 @@ export default function PriceAssessmentPage() {
               </div>
             </div>
 
-            {/* analysis block */}
             <div className="mt-4 rounded-2xl bg-white p-6 shadow">
-              <div className="text-lg font-semibold text-slate-900">บทวิเคราะห์และราคาตลาด (Market Analysis)</div>
+              <div className="text-lg font-semibold text-slate-900">บทวิเคราะห์และราคาตลาด</div>
 
               <div className="mt-4 grid gap-4 md:grid-cols-2">
                 <div className="rounded-xl bg-slate-50 p-4">
-                  <div className="text-xs text-slate-500">ราคามือหนึ่ง (Reference)</div>
+                  <div className="text-xs text-slate-500">Reference (ในระบบเรา)</div>
                   <div className="mt-1 text-sm font-semibold text-slate-800">{computed.refText}</div>
                 </div>
                 <div className="rounded-xl bg-slate-50 p-4">
-                  <div className="text-xs text-slate-500">ราคามือสอง (Market Price)</div>
+                  <div className="text-xs text-slate-500">Market Range</div>
                   <div className="mt-1 text-sm font-semibold text-slate-800">{computed.marketRange}</div>
-                  {ai ? (
-                    <div className="mt-1 text-xs text-slate-500">ความมั่นใจ AI: {computed.confidence}%</div>
-                  ) : null}
+                  {ai ? <div className="mt-1 text-xs text-slate-500">ความมั่นใจ AI: {computed.confidence}%</div> : null}
                 </div>
               </div>
 
-              <div className="mt-4 text-sm font-semibold text-slate-900">เหตุผลประกอบการประเมิน:</div>
+              <div className="mt-4 text-sm font-semibold text-slate-900">เหตุผลประกอบการประเมิน</div>
               <div className="mt-2 rounded-xl border bg-white p-4 text-sm leading-6 text-slate-700">
-                {ai ? (
-                  computed.analysis
-                ) : (
-                  <span className="text-slate-500">
-                    กด “วิเคราะห์ราคา” เพื่อให้ AI ประเมินราคา พร้อมเหตุผลประกอบ
-                  </span>
-                )}
+                {ai ? computed.analysis : <span className="text-slate-500">กด “วิเคราะห์ราคา” เพื่อเริ่ม</span>}
               </div>
 
-              {/* refs preview */}
               {ai?.refs?.length ? (
                 <div className="mt-4">
-                  <div className="text-sm font-semibold text-slate-900">ตัวอย่างของคล้ายในระบบ (References)</div>
+                  <div className="text-sm font-semibold text-slate-900">ของคล้ายในระบบ (Refs)</div>
                   <div className="mt-2 overflow-x-auto">
                     <table className="w-full text-sm">
                       <thead className="bg-slate-50 text-left text-xs text-slate-500">
@@ -309,8 +356,9 @@ export default function PriceAssessmentPage() {
                       </tbody>
                     </table>
                   </div>
+
                   <div className="mt-2 text-xs text-slate-500">
-                    *อ้างอิงจากข้อมูลในระบบ เพื่อช่วยกันราคา AI เพี้ยน
+                    *ถ้า refs ไม่ขึ้น แปลว่า backend ยังไม่ได้ส่ง refs/stats กลับมา (เดี๋ยวเราปรับฝั่ง backend ต่อได้)
                   </div>
                 </div>
               ) : null}
