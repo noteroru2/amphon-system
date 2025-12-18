@@ -1,11 +1,11 @@
 // src/inventory/InventorySellPage.tsx
 import { useParams, useNavigate } from "react-router-dom";
 import useSWR from "swr";
-import axios from "axios";
 import { useEffect, useState } from "react";
 import { printReceipt } from "../../utils/printHelpers";
+import { api } from "../../lib/api";
 
-const fetcher = (url: string) => axios.get(url).then((r) => r.data);
+const fetcher = (url: string) => api.get(url).then((r) => r.data);
 
 type ItemDetail = {
   id: number;
@@ -26,9 +26,10 @@ const InventorySellPage: React.FC = () => {
   const { id } = useParams();
   const navigate = useNavigate();
 
-  const { data: item, isLoading } = useSWR<ItemDetail>(
-    id ? `/api/inventory/${id}` : null,
-    fetcher
+  const { data: item, isLoading, mutate } = useSWR<ItemDetail>(
+    id ? `/api/inventory/${id}?t=${Date.now()}` : null,
+    fetcher,
+    { revalidateOnFocus: false }
   );
 
   const [price, setPrice] = useState("");
@@ -46,11 +47,9 @@ const InventorySellPage: React.FC = () => {
     if (!item) return;
 
     const initial =
-      item.sellingPrice && item.sellingPrice > 0
-        ? item.sellingPrice
-        : item.cost;
+      item.sellingPrice && item.sellingPrice > 0 ? item.sellingPrice : item.cost;
 
-    setPrice(String(initial));
+    setPrice(String(initial || ""));
     setBuyerName(item.buyerName || "");
     setBuyerPhone(item.buyerPhone || "");
     setBuyerAddress(item.buyerAddress || "");
@@ -82,32 +81,37 @@ const InventorySellPage: React.FC = () => {
     setSubmitting(true);
     try {
       // 1) บันทึกการขาย
-      await axios.post(`/api/inventory/${item.id}/sell`, {
+      await api.post(`/api/inventory/${item.id}/sell`, {
         sellingPrice: numPrice,
         quantity: sellQty,
-        buyerName: buyerName || undefined,
-        buyerPhone: buyerPhone || undefined,
-        buyerAddress: buyerAddress || undefined,
-        buyerTaxId: buyerTaxId || undefined,
+        buyerName: buyerName || null,
+        buyerPhone: buyerPhone || null,
+        buyerAddress: buyerAddress || null,
+        buyerTaxId: buyerTaxId || null,
       });
 
-      // 2) โหลดข้อมูลล่าสุด
-      const { data: latest } = await axios.get<ItemDetail>(
-        `/api/inventory/${item.id}`
-      );
+      // 2) รีเฟรชข้อมูลล่าสุด (เพื่อเอา title/serial/buyer ล่าสุด)
+      await mutate();
 
       // 3) พิมพ์ใบเสร็จ (ยอดรวมจริง)
       const totalAmount = numPrice * sellQty;
 
+      // printReceipt ต้องการ item + price รวม
       printReceipt(
         {
-          ...(latest as any),
+          ...(item as any),
+          title: item.title || item.name,
           quantitySold: sellQty,
+          buyerName: buyerName || undefined,
+          buyerPhone: buyerPhone || undefined,
+          buyerAddress: buyerAddress || undefined,
+          buyerTaxId: buyerTaxId || undefined,
         },
         totalAmount
       );
 
-      navigate("/inventory");
+      // ✅ กลับหน้าคลัง (ปรับให้ตรง routing ของคุณ)
+      navigate("/app/inventory");
     } catch (err) {
       console.error("ขายสินค้าล้มเหลว:", err);
       alert("ไม่สามารถบันทึกการขายได้");
@@ -199,15 +203,16 @@ const InventorySellPage: React.FC = () => {
           <div className="flex justify-end gap-2 pt-2">
             <button
               type="button"
-              onClick={() => navigate("/inventory")}
+              onClick={() => navigate("/app/inventory")}
               className="rounded-xl border px-4 py-2"
+              disabled={submitting}
             >
               ยกเลิก
             </button>
             <button
               type="submit"
               disabled={submitting}
-              className="rounded-xl bg-blue-600 px-4 py-2 text-white"
+              className="rounded-xl bg-blue-600 px-4 py-2 text-white disabled:opacity-60"
             >
               {submitting ? "กำลังบันทึก..." : "ยืนยันขาย"}
             </button>

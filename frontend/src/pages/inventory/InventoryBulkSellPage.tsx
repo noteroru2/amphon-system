@@ -1,8 +1,8 @@
 // frontend/src/pages/inventory/InventoryBulkSellPage.tsx
 import React, { useEffect, useMemo, useState } from "react";
-import axios from "axios";
 import { useNavigate } from "react-router-dom";
 import { printBulkSellReceipt } from "../../utils/printHelpers";
+import { api } from "../../lib/api";
 
 type SellableItem = {
   id: number;
@@ -23,19 +23,11 @@ type SellableItem = {
   createdAt: string;
 };
 
-type ItemDetailForPrint = {
-  id: number;
-  code: string;
-  name: string;
-  title?: string;
-  serial?: string | null;
-};
-
 type BulkReceiptItem = {
   id: number;
   title: string;
   serial?: string;
-  price: number;
+  price: number; // ✅ จำนวนเงินต่อรายการ (qty*unitPrice)
 };
 
 type BuyerInfo = {
@@ -87,13 +79,12 @@ const InventoryBulkSellPage: React.FC = () => {
     try {
       setLoading(true);
 
-      // ดึงจาก /api/inventory แล้วกรองเฉพาะที่ยังมีของเหลือ
-      const { data } = await axios.get<SellableItem[]>("/api/inventory");
+      const { data } = await api.get<SellableItem[]>(`/api/inventory?t=${Date.now()}`);
       const list = (data || []).filter((it) => Number(it.quantityAvailable ?? 0) > 0);
 
       setItems(list);
 
-      // ตั้งค่า default qty=1 และ price จาก sellingPrice/targetPrice/cost
+      // default qty=1 + default price
       const nextQty: Record<number, number> = {};
       const nextPrice: Record<number, number> = {};
       for (const it of list) {
@@ -172,16 +163,16 @@ const InventoryBulkSellPage: React.FC = () => {
       return;
     }
 
-    // build payload: ต่อรายการมี qty + price ต่อชิ้น
-    const payload: { id: number; price: number; quantity: number }[] = [];
+    // build payload สำหรับ bulk-sell
+    const payloadItems: { id: number; quantity: number; sellingPrice: number }[] = [];
 
     for (const it of items) {
       if (!selected.has(it.id)) continue;
 
       const qty = clampInt(draftQty[it.id] ?? 1, 1, Math.max(1, it.quantityAvailable || 1));
-      const price = Number(draftPrice[it.id] ?? 0);
+      const sellingPrice = Number(draftPrice[it.id] ?? 0);
 
-      if (!price || price <= 0) {
+      if (!sellingPrice || sellingPrice <= 0) {
         alert(`กรุณาระบุราคาขายให้ถูกต้อง (ติดที่ ${it.name})`);
         return;
       }
@@ -191,42 +182,17 @@ const InventoryBulkSellPage: React.FC = () => {
         return;
       }
 
-      payload.push({ id: it.id, price, quantity: qty });
+      payloadItems.push({ id: it.id, quantity: qty, sellingPrice });
     }
 
     const confirmText =
-      `ยืนยันเปิดบิลขายสินค้า ${payload.length} รายการ (รวม ${totals.qtyTotal} ชิ้น)\n` +
+      `ยืนยันเปิดบิลขายสินค้า ${payloadItems.length} รายการ (รวม ${totals.qtyTotal} ชิ้น)\n` +
       `ยอดรวม ${fmtMoney(totals.amountTotal)} บาท\n` +
       `ระบบจะบันทึกการขาย + ลง Cashbook และพิมพ์ใบเสร็จ`;
     if (!window.confirm(confirmText)) return;
 
     setSubmitting(true);
     try {
-      const itemsForReceipt: BulkReceiptItem[] = [];
-
-      // บันทึกทีละรายการ (ตาม payload)
-      for (const s of payload) {
-        await axios.post(`/api/inventory/${s.id}/sell`, {
-          sellingPrice: s.price, // ต่อชิ้น
-          quantity: s.quantity,
-          buyerName: buyerName || null,
-          buyerPhone: buyerPhone || null,
-          buyerAddress: buyerAddress || null,
-          buyerTaxId: buyerTaxId || null,
-        });
-
-        // ดึงล่าสุดเพื่อชื่อ/serial ให้ชัวร์
-        const { data: latest } = await axios.get<ItemDetailForPrint>(`/api/inventory/${s.id}`);
-
-        // ใบเสร็จ: “1 แถว = 1 รายการ” แต่ยอดเงินต้องเป็น qty*price
-        itemsForReceipt.push({
-          id: latest.id,
-          title: (latest.title || latest.name || "-") + ` x${s.quantity}`,
-          serial: latest.serial || undefined,
-          price: s.price * s.quantity,
-        });
-      }
-
       const buyer: BuyerInfo = {
         name: buyerName || undefined,
         phone: buyerPhone || undefined,
@@ -234,23 +200,32 @@ const InventoryBulkSellPage: React.FC = () => {
         taxId: buyerTaxId || undefined,
       };
 
-      printBulkSellReceipt(
-  selectedItems.map((it) => ({
-    id: it.id,
-    title: it.name,        // หรือ it.title ตามของคุณ
-    serial: it.serial ?? "",
-    unitPrice: it.sellingPrice, // ราคาต่อชิ้น
-    quantity: it.quantity       // จำนวนที่ขาย
-  })),
-  buyerInfo
-);
+      // ✅ ยิงครั้งเดียว ไป bulk-sell
+      const resp = await api.post(`/api/inventory/bulk-sell`, {
+        items: payloadItems,
+        buyer,
+      });
 
+      // ✅ สร้างรายการสำหรับพิมพ์ใบเสร็จตาม printHelpers.ts ของคุณ
+      // printBulkSellReceipt(items: [{id,title,serial,price}], buyer)
+      const receiptItems: BulkReceiptItem[] = payloadItems.map((p) => {
+        const it = items.find((x) => x.id === p.id);
+        const title = `${it?.name || "-"} x${p.quantity}`;
+        const serial = it?.serial || undefined;
+        const price = p.sellingPrice * p.quantity; // ✅ amount ต่อรายการ
+        return { id: p.id, title, serial: serial || undefined, price };
+      });
+
+      printBulkSellReceipt(receiptItems, buyer);
 
       alert("บันทึกการขายเรียบร้อย");
-      navigate("/inventory");
-    } catch (err) {
+      navigate("/app/inventory");
+    } catch (err: any) {
       console.error("ขายหลายชิ้นล้มเหลว:", err);
-      alert("ไม่สามารถบันทึกการขายบางรายการได้");
+      const msg =
+        err?.response?.data?.message ||
+        "ไม่สามารถบันทึกการขาย (bulk) ได้";
+      alert(msg);
     } finally {
       setSubmitting(false);
     }
@@ -271,7 +246,7 @@ const InventoryBulkSellPage: React.FC = () => {
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={() => navigate("/inventory")}
+              onClick={() => navigate("/app/inventory")}
               className="rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50"
               disabled={submitting}
             >
@@ -371,7 +346,7 @@ const InventoryBulkSellPage: React.FC = () => {
                 const maxAvail = Math.max(1, Number(it.quantityAvailable ?? 0));
                 const qty = clampInt(draftQty[it.id] ?? 1, 1, maxAvail);
                 const price = Number(draftPrice[it.id] ?? 0);
-                const rowTotal = (isChecked ? qty * (Number.isFinite(price) ? price : 0) : 0);
+                const rowTotal = isChecked ? qty * (Number.isFinite(price) ? price : 0) : 0;
 
                 return (
                   <div
@@ -470,7 +445,7 @@ const InventoryBulkSellPage: React.FC = () => {
         </div>
 
         <div className="mt-3 text-xs text-slate-500">
-          * ระบบจะตัดสต๊อกตาม “จำนวนที่ขาย” และเปลี่ยนสถานะเป็น SOLD_OUT เมื่อคงเหลือ = 0
+          * ระบบจะตัดสต๊อกตาม “จำนวนที่ขาย” และเปลี่ยนสถานะเป็น SOLD เมื่อคงเหลือ = 0
         </div>
       </div>
     </div>

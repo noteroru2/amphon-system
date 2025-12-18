@@ -339,4 +339,161 @@ router.post("/:id/sell", async (req, res) => {
   }
 });
 
+// -------- 4) BULK SELL: POST /api/inventory/bulk-sell --------
+router.post("/bulk-sell", async (req, res) => {
+  try {
+    const { items, buyer } = req.body || {};
+
+    if (!Array.isArray(items) || items.length === 0) {
+      return res.status(400).json({ message: "items ต้องเป็น array และห้ามว่าง" });
+    }
+
+    const cleanItems = items.map((x) => ({
+      id: Number(x.id),
+      quantity: Number(x.quantity ?? 1),
+      sellingPrice: Number(x.sellingPrice ?? 0),
+    }));
+
+    for (const it of cleanItems) {
+      if (!Number.isFinite(it.id) || it.id <= 0) {
+        return res.status(400).json({ message: "id ไม่ถูกต้อง" });
+      }
+      if (!Number.isFinite(it.quantity) || it.quantity <= 0) {
+        return res.status(400).json({ message: "quantity ต้องมากกว่า 0" });
+      }
+      if (!Number.isFinite(it.sellingPrice) || it.sellingPrice <= 0) {
+        return res.status(400).json({ message: "sellingPrice ต้องมากกว่า 0" });
+      }
+    }
+
+    const result = await prisma.$transaction(async (tx) => {
+      const soldItems = [];
+      let grandTotal = 0;
+      let grandProfit = 0;
+
+      for (const reqIt of cleanItems) {
+        const item = await tx.inventoryItem.findUnique({
+          where: { id: reqIt.id },
+          select: {
+            id: true,
+            code: true,
+            name: true,
+            serial: true,
+            status: true,
+            sourceType: true,
+            cost: true,
+            quantity: true,
+            quantityAvailable: true,
+            quantitySold: true,
+            grossProfit: true,
+            netProfit: true,
+          },
+        });
+
+        if (!item) {
+          const e = new Error("NOT_FOUND");
+          e.code = "NOT_FOUND";
+          e.itemId = reqIt.id;
+          throw e;
+        }
+
+        const totalQty = Math.max(Number(item.quantity ?? 1), 1);
+        const totalCost = Number(item.cost ?? 0);
+        const unitCost = totalQty > 1 && totalCost > 0 ? totalCost / totalQty : totalCost;
+
+        const available = Number(item.quantityAvailable ?? (Number(item.quantity ?? 0) - Number(item.quantitySold ?? 0)));
+        if (available <= 0 || item.status === "SOLD") {
+          const e = new Error("OUT_OF_STOCK");
+          e.code = "OUT_OF_STOCK";
+          e.itemId = item.id;
+          throw e;
+        }
+        if (reqIt.quantity > available) {
+          const e = new Error("QTY_EXCEED");
+          e.code = "QTY_EXCEED";
+          e.itemId = item.id;
+          e.available = available;
+          throw e;
+        }
+
+        const amount = reqIt.sellingPrice * reqIt.quantity;
+        const profitThis = (reqIt.sellingPrice - unitCost) * reqIt.quantity;
+
+        const newAvailable = available - reqIt.quantity;
+        const newSold = Number(item.quantitySold ?? 0) + reqIt.quantity;
+        const nextStatus = newAvailable === 0 ? "SOLD" : (item.status || "IN_STOCK");
+
+        const prevGross = Number(item.grossProfit ?? 0);
+        const prevNet = Number(item.netProfit ?? 0);
+
+        const updated = await tx.inventoryItem.update({
+          where: { id: item.id },
+          data: {
+            sellingPrice: reqIt.sellingPrice,
+            quantityAvailable: newAvailable,
+            quantitySold: newSold,
+            status: nextStatus,
+
+            buyerName: buyer?.name ?? null,
+            buyerPhone: buyer?.phone ?? null,
+            buyerAddress: buyer?.address ?? null,
+            buyerTaxId: buyer?.taxId ?? null,
+
+            grossProfit: prevGross + profitThis,
+            netProfit: prevNet + profitThis,
+          },
+        });
+
+        await tx.cashbookEntry.create({
+          data: {
+            type: "IN",
+            category: "INVENTORY_SALE",
+            amount,
+            profit: profitThis,
+            inventoryItemId: item.id,
+            description: `ขายสินค้า ${item.name} (${item.code}) จำนวน ${reqIt.quantity} ชิ้น`,
+          },
+        });
+
+        soldItems.push({
+          id: item.id,
+          code: item.code,
+          title: item.name,
+          serial: item.serial || undefined,
+          quantity: reqIt.quantity,
+          unitPrice: reqIt.sellingPrice,
+          amount,
+          profit: profitThis,
+          status: updated.status,
+        });
+
+        grandTotal += amount;
+        grandProfit += profitThis;
+      }
+
+      return { soldItems, grandTotal, grandProfit };
+    });
+
+    return res.json({ ok: true, ...result });
+  } catch (err) {
+    console.error("POST /api/inventory/bulk-sell error:", err);
+
+    if (err?.code === "NOT_FOUND") {
+      return res.status(404).json({ message: "ไม่พบสินค้า", itemId: err.itemId });
+    }
+    if (err?.code === "OUT_OF_STOCK") {
+      return res.status(400).json({ message: "สินค้าหมดสต๊อกแล้ว", itemId: err.itemId });
+    }
+    if (err?.code === "QTY_EXCEED") {
+      return res.status(400).json({
+        message: "จำนวนขายมากกว่าสต๊อกที่เหลือ",
+        itemId: err.itemId,
+        available: err.available,
+      });
+    }
+
+    return res.status(500).json({ message: "ขายหลายชิ้นไม่สำเร็จ", error: String(err) });
+  }
+});
+
 export default router;
