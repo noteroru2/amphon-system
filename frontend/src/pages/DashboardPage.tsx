@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useState } from "react";
-import axios from "axios";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { api, getApiErrorMessage } from "../lib/api"; // <-- ปรับ path ให้ตรงโปรเจกต์คุณ
 
 type Overview = {
   activeContracts: number;
@@ -43,10 +43,16 @@ type Cards = {
 };
 
 function fmt(n: number) {
-  return (Number(n || 0).toLocaleString("th-TH") + " ฿");
+  return Number(n || 0).toLocaleString("th-TH") + " ฿";
 }
 
-function Pill({ color, children }: { color: string; children: React.ReactNode }) {
+function Pill({
+  color,
+  children,
+}: {
+  color: string;
+  children: React.ReactNode;
+}) {
   const cls =
     color === "purple"
       ? "bg-purple-100 text-purple-700"
@@ -55,7 +61,13 @@ function Pill({ color, children }: { color: string; children: React.ReactNode })
       : color === "blue"
       ? "bg-blue-100 text-blue-700"
       : "bg-orange-100 text-orange-700";
-  return <span className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${cls}`}>{children}</span>;
+  return (
+    <span
+      className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${cls}`}
+    >
+      {children}
+    </span>
+  );
 }
 
 function StatCard({
@@ -78,6 +90,7 @@ function StatCard({
 
 export default function AIBusinessAdvisorPage() {
   const [loading, setLoading] = useState(true);
+  const [btnLoading, setBtnLoading] = useState(false);
   const [err, setErr] = useState("");
 
   const [overview, setOverview] = useState<Overview | null>(null);
@@ -85,26 +98,44 @@ export default function AIBusinessAdvisorPage() {
 
   const [deadDays, setDeadDays] = useState(60);
 
-  const fetchAll = async () => {
+  // กัน setState หลัง component unmount
+  const aliveRef = useRef(true);
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => {
+      aliveRef.current = false;
+    };
+  }, []);
+
+  const fetchAll = async (source: "auto" | "manual" = "auto") => {
     try {
       setErr("");
+      if (source === "manual") setBtnLoading(true);
       setLoading(true);
-      const [ov, cd] = await Promise.all([
-        axios.get("/api/ai/business/overview"),
-        axios.get("/api/ai/business/cards", { params: { deadDays } }),
+
+      // ✅ ใช้ api instance เท่านั้น (baseURL = VITE_API_BASE_URL)
+      const [ovRes, cdRes] = await Promise.all([
+        api.get("/api/ai/business/overview"),
+        api.get("/api/ai/business/cards", { params: { deadDays } }),
       ]);
-      setOverview(ov.data);
-      setCards(cd.data);
+
+      if (!aliveRef.current) return;
+      setOverview(ovRes.data);
+      setCards(cdRes.data);
     } catch (e: any) {
       console.error(e);
-      setErr(e?.response?.data?.message || e?.message || "โหลดข้อมูลไม่สำเร็จ");
+      if (!aliveRef.current) return;
+      setErr(getApiErrorMessage(e) || "โหลดข้อมูลไม่สำเร็จ");
     } finally {
+      if (!aliveRef.current) return;
       setLoading(false);
+      setBtnLoading(false);
     }
   };
 
+  // auto refresh เมื่อเปลี่ยน deadDays
   useEffect(() => {
-    fetchAll();
+    fetchAll("auto");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [deadDays]);
 
@@ -121,9 +152,12 @@ export default function AIBusinessAdvisorPage() {
                 <span className="h-2 w-2 rounded-full bg-emerald-400" />
                 AI BUSINESS ADVISOR
               </div>
-              <div className="mt-3 text-2xl font-bold">ระบบวิเคราะห์ร้านค้าอัจฉริยะ</div>
+              <div className="mt-3 text-2xl font-bold">
+                ระบบวิเคราะห์ร้านค้าอัจฉริยะ
+              </div>
               <div className="mt-1 text-sm text-white/70">
-                ใช้ข้อมูลสัญญา คลังสินค้า และรายได้ เพื่อช่วยแนะนำกลยุทธ์โปรโมชัน การจัดสต๊อก และแผนเติบโตของร้านคุณ
+                ใช้ข้อมูลสัญญา คลังสินค้า และรายได้ เพื่อช่วยแนะนำกลยุทธ์โปรโมชัน
+                การจัดสต๊อก และแผนเติบโตของร้านคุณ
               </div>
             </div>
 
@@ -140,40 +174,50 @@ export default function AIBusinessAdvisorPage() {
                   <option value={90}>90 วัน</option>
                 </select>
               </div>
+
               <button
-                onClick={fetchAll}
-                className="rounded-xl bg-red-500 px-4 py-2 text-sm font-semibold text-white hover:opacity-95"
+                onClick={() => fetchAll("manual")}
+                disabled={btnLoading}
+                className={`rounded-xl bg-red-500 px-4 py-2 text-sm font-semibold text-white hover:opacity-95 ${
+                  btnLoading ? "opacity-70 cursor-not-allowed" : ""
+                }`}
               >
-                เริ่มวิเคราะห์ข้อมูล
+                {btnLoading ? "กำลังวิเคราะห์..." : "เริ่มวิเคราะห์ข้อมูล"}
               </button>
             </div>
           </div>
         </div>
 
         {err ? (
-          <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{err}</div>
+          <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {err}
+          </div>
         ) : null}
 
-        {/* OVERVIEW (สุขภาพร้านใน 3 วิ) */}
+        {/* OVERVIEW */}
         <div className="mt-6 grid gap-4 md:grid-cols-4">
           <StatCard
             title="💼 สัญญาคงค้าง (ACTIVE)"
-            value={overview ? overview.activeContracts : "-"}
+            value={overview ? overview.activeContracts : loading ? "..." : "-"}
             sub="ติดตามความเสี่ยง/ใกล้ครบกำหนดในหน้าสัญญา"
           />
           <StatCard
             title="📦 มูลค่าสต๊อก (ราคาตั้งขาย)"
-            value={overview ? fmt(overview.stockValuationTarget) : "-"}
+            value={
+              overview ? fmt(overview.stockValuationTarget) : loading ? "..." : "-"
+            }
             sub={overview ? `ต้นทุนรวม ~ ${fmt(overview.stockValuationCost)}` : ""}
           />
           <StatCard
             title="💰 กำไรวันนี้ (จาก Cashbook.profit)"
-            value={overview ? fmt(overview.profitToday) : "-"}
+            value={overview ? fmt(overview.profitToday) : loading ? "..." : "-"}
             sub="ถ้ากำไรไม่ขึ้น ให้ตรวจการบันทึก profit ใน cashbook"
           />
           <StatCard
             title="🧾 รายได้ค่าบริการเดือนนี้"
-            value={overview ? fmt(overview.serviceFeeThisMonth) : "-"}
+            value={
+              overview ? fmt(overview.serviceFeeThisMonth) : loading ? "..." : "-"
+            }
             sub="รวมรายการที่ contractId != null และ profit > 0"
           />
         </div>
@@ -183,11 +227,15 @@ export default function AIBusinessAdvisorPage() {
           {/* Promotion */}
           <div className="rounded-2xl bg-white p-5 shadow">
             <Pill color="purple">Promotion Strategy</Pill>
-            <div className="mt-3 text-sm text-slate-600">แนะนำโปรโมชันสำหรับสินค้าที่ค้างสต๊อกนาน</div>
+            <div className="mt-3 text-sm text-slate-600">
+              แนะนำโปรโมชันสำหรับสินค้าที่ค้างสต๊อกนาน
+            </div>
 
             <div className="mt-4 rounded-xl bg-slate-50 p-3">
               <div className="text-xs text-slate-500">Dead Stock Alert</div>
-              <div className="mt-1 text-2xl font-bold text-slate-900">{loading ? "-" : deadStockCount}</div>
+              <div className="mt-1 text-2xl font-bold text-slate-900">
+                {loading ? "-" : deadStockCount}
+              </div>
               <div className="text-xs text-slate-500">รายการเกิน {deadDays} วัน</div>
             </div>
 
@@ -199,13 +247,18 @@ export default function AIBusinessAdvisorPage() {
                     ค้าง {x.ageDays} วัน • คงเหลือ {x.qty} • ตั้งขาย {fmt(x.targetPrice)}
                   </div>
                   <div className="mt-2 text-xs">
-                    Suggested Discount: <span className="font-semibold">{x.suggestedDiscountPct}%</span> → แนะนำขาย{" "}
+                    Suggested Discount:{" "}
+                    <span className="font-semibold">{x.suggestedDiscountPct}%</span>{" "}
+                    → แนะนำขาย{" "}
                     <span className="font-semibold">{fmt(x.suggestedPrice)}</span>
                   </div>
                 </div>
               ))}
+
               {!loading && !(cards?.promotion?.deadStock?.length) ? (
-                <div className="text-xs text-slate-500">ยังไม่พบ dead stock ในเงื่อนไขนี้</div>
+                <div className="text-xs text-slate-500">
+                  ยังไม่พบ dead stock ในเงื่อนไขนี้
+                </div>
               ) : null}
             </div>
 
@@ -217,24 +270,35 @@ export default function AIBusinessAdvisorPage() {
           {/* Acquisition */}
           <div className="rounded-2xl bg-white p-5 shadow">
             <Pill color="green">Stock Acquisition</Pill>
-            <div className="mt-3 text-sm text-slate-600">โฟกัสรุ่นที่รับมาแล้วขายออกไวที่สุด</div>
+            <div className="mt-3 text-sm text-slate-600">
+              โฟกัสรุ่นที่รับมาแล้วขายออกไวที่สุด
+            </div>
 
             <div className="mt-4 space-y-2">
               {(cards?.acquisition?.topWanted || []).map((x, idx) => (
-                <div key={x.name} className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2">
+                <div
+                  key={x.name}
+                  className="flex items-center justify-between rounded-xl bg-slate-50 px-3 py-2"
+                >
                   <div className="text-sm">
                     <span className="mr-2 text-xs text-slate-500">#{idx + 1}</span>
                     {x.name}
                   </div>
-                  <div className="text-xs font-semibold text-emerald-700">ขายออก {x.soldCount} ครั้ง</div>
+                  <div className="text-xs font-semibold text-emerald-700">
+                    ขายออก {x.soldCount} ครั้ง
+                  </div>
                 </div>
               ))}
               {!loading && !(cards?.acquisition?.topWanted?.length) ? (
-                <div className="text-xs text-slate-500">ยังไม่มีข้อมูลขายพอ (แนะนำให้บันทึกขายให้ครบ)</div>
+                <div className="text-xs text-slate-500">
+                  ยังไม่มีข้อมูลขายพอ (แนะนำให้บันทึกขายให้ครบ)
+                </div>
               ) : null}
             </div>
 
-            <div className="mt-3 text-xs text-slate-500">{cards?.acquisition?.overpricedWarning?.note || ""}</div>
+            <div className="mt-3 text-xs text-slate-500">
+              {cards?.acquisition?.overpricedWarning?.note || ""}
+            </div>
           </div>
 
           {/* SEO */}
@@ -244,12 +308,16 @@ export default function AIBusinessAdvisorPage() {
 
             <div className="mt-4 rounded-xl bg-slate-50 p-3">
               <div className="text-xs text-slate-500">Best Channel</div>
-              <div className="mt-2 text-xs text-slate-600">{cards?.seo?.bestChannel?.note || "—"}</div>
+              <div className="mt-2 text-xs text-slate-600">
+                {cards?.seo?.bestChannel?.note || "—"}
+              </div>
             </div>
 
             <div className="mt-3 rounded-xl bg-slate-50 p-3">
               <div className="text-xs text-slate-500">Keyword Trends</div>
-              <div className="mt-2 text-xs text-slate-600">{cards?.seo?.keywordTrends?.note || "—"}</div>
+              <div className="mt-2 text-xs text-slate-600">
+                {cards?.seo?.keywordTrends?.note || "—"}
+              </div>
             </div>
           </div>
 
@@ -263,7 +331,9 @@ export default function AIBusinessAdvisorPage() {
               <div className="mt-1 text-2xl font-bold text-slate-900">
                 {loading ? "-" : `${cards?.growth?.repeatRate ?? 0}%`}
               </div>
-              <div className="text-xs text-slate-500">ลูกค้ากลับมาใช้บริการซ้ำ (proxy จากจำนวนสัญญา)</div>
+              <div className="text-xs text-slate-500">
+                ลูกค้ากลับมาใช้บริการซ้ำ (proxy จากจำนวนสัญญา)
+              </div>
             </div>
 
             <div className="mt-4 space-y-2">
@@ -278,11 +348,13 @@ export default function AIBusinessAdvisorPage() {
 
         {/* AI Chat Assistant (MVP placeholder) */}
         <div className="mt-6 rounded-2xl bg-white p-6 shadow">
-          <div className="text-lg font-semibold text-slate-900">💬 AI Chat Assistant (Phase ถัดไป)</div>
+          <div className="text-lg font-semibold text-slate-900">
+            💬 AI Chat Assistant (Phase ถัดไป)
+          </div>
           <div className="mt-1 text-sm text-slate-600">
-            ปุ่ม “เริ่มวิเคราะห์ข้อมูล” ตอนนี้ดึง insight จากฐานข้อมูลจริงแล้ว
-            — ถ้าต้องการให้ถามภาษาคนกับข้อมูลร้าน (เช่น “เดือนนี้กำไรจาก iPhone เท่าไหร่?”)
-            ผมจะทำ endpoint แชทที่เรียก Gemini + query DB แบบปลอดภัยให้เป็น Phase ต่อไป
+            ปุ่ม “เริ่มวิเคราะห์ข้อมูล” ตอนนี้ดึง insight จากฐานข้อมูลจริงแล้ว — ถ้าต้องการให้ถามภาษาคนกับข้อมูลร้าน
+            (เช่น “เดือนนี้กำไรจาก iPhone เท่าไหร่?”) ผมจะทำ endpoint แชทที่เรียก Gemini + query DB แบบปลอดภัยให้เป็น
+            Phase ต่อไป
           </div>
         </div>
       </div>

@@ -6,14 +6,35 @@ const router = express.Router();
 
 /**
  * GET /api/cashbook?year=YYYY&month=MM
+ * (รองรับเพิ่ม) GET /api/cashbook?month=YYYY-MM
+ *
  * ถ้าไม่ส่ง -> ใช้เดือนปัจจุบันของเครื่อง server
  */
 router.get("/", async (req, res) => {
   try {
     const now = new Date();
 
-    let year = parseInt(req.query.year, 10);
-    let month = parseInt(req.query.month, 10);
+    // รองรับ 2 รูปแบบ:
+    // 1) ?year=2025&month=12
+    // 2) ?month=2025-12
+    const qYear = req.query.year;
+    const qMonth = req.query.month;
+
+    let year = Number.parseInt(qYear, 10);
+    let month = Number.parseInt(qMonth, 10);
+
+    // ถ้า month เป็น YYYY-MM ให้ parse แยก
+    if (
+      (Number.isNaN(year) || !qYear) &&
+      typeof qMonth === "string" &&
+      qMonth.includes("-")
+    ) {
+      const [yStr, mStr] = qMonth.split("-");
+      const y = Number.parseInt(yStr, 10);
+      const m = Number.parseInt(mStr, 10);
+      if (!Number.isNaN(y)) year = y;
+      if (!Number.isNaN(m)) month = m;
+    }
 
     if (Number.isNaN(year) || year < 2000 || year > 2100) {
       year = now.getFullYear();
@@ -22,6 +43,7 @@ router.get("/", async (req, res) => {
       month = now.getMonth() + 1; // JS: 0–11
     }
 
+    // ขอบเขตเดือน
     const start = new Date(year, month - 1, 1, 0, 0, 0);
     const end = new Date(year, month, 1, 0, 0, 0);
 
@@ -61,11 +83,9 @@ router.get("/", async (req, res) => {
       const amount = e.amount ? Number(e.amount) : 0;
       const profit = e.profit ? Number(e.profit) : 0;
 
-      if (e.type === "IN") {
-        totalIn += amount;
-      } else if (e.type === "OUT") {
-        totalOut += amount;
-      }
+      if (e.type === "IN") totalIn += amount;
+      if (e.type === "OUT") totalOut += amount;
+
       totalProfit += profit;
 
       // สรุป principal
@@ -81,8 +101,7 @@ router.get("/", async (req, res) => {
       }
 
       const inventoryTitle = e.inventoryItem
-        ? e.inventoryItem.name ||
-          `ทรัพย์จากคลัง #${e.inventoryItem.id}`
+        ? e.inventoryItem.name || `ทรัพย์จากคลัง #${e.inventoryItem.id}`
         : null;
 
       const inventoryInfo = e.inventoryItem
@@ -112,7 +131,7 @@ router.get("/", async (req, res) => {
       };
     });
 
-    const response = {
+    return res.json({
       month: `${year}-${String(month).padStart(2, "0")}`,
       summary: {
         totalIn,
@@ -121,12 +140,10 @@ router.get("/", async (req, res) => {
         totalProfit,
         principalOut,
         principalIn,
-        profit: totalProfit,
+        profit: totalProfit, // alias
       },
       entries: mapped,
-    };
-
-    return res.json(response);
+    });
   } catch (err) {
     console.error("GET /api/cashbook error:", err);
     return res.status(500).json({

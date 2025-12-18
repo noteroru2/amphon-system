@@ -1,7 +1,7 @@
 // frontend/src/pages/admin/CashbookPage.tsx
-import { useState, useMemo } from "react";
+import { useMemo, useState } from "react";
 import useSWR from "swr";
-import axios from "axios";
+import { api } from "../lib/api";
 
 type CashbookEntry = {
   id: number;
@@ -14,6 +14,8 @@ type CashbookEntry = {
   contractCode?: string | null;
   inventoryItemId?: number | null;
   inventoryTitle?: string | null;
+  inventoryInfo?: string | null;
+  profit?: number;
 };
 
 type CashbookResponse = {
@@ -30,10 +32,10 @@ type CashbookResponse = {
   entries: CashbookEntry[];
 };
 
-const fetcher = (url: string) => axios.get(url).then((r) => r.data);
+const fetcher = (url: string) => api.get(url).then((r) => r.data);
 
 function formatBaht(v: number) {
-  return v.toLocaleString("th-TH", {
+  return Number(v || 0).toLocaleString("th-TH", {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   });
@@ -56,6 +58,7 @@ function monthLabel(monthStr: string) {
   const [yearStr, monthNum] = monthStr.split("-");
   const year = Number(yearStr);
   const month = Number(monthNum);
+
   const monthsTh = [
     "",
     "ม.ค.",
@@ -75,7 +78,18 @@ function monthLabel(monthStr: string) {
   return `${monthsTh[month]} ${year + 543}`;
 }
 
-export  function CashbookPage() {
+function parseSelectedMonthToYearMonth(selectedMonth: string) {
+  // selectedMonth จาก <input type="month"> => "YYYY-MM"
+  const [yStr, mStr] = (selectedMonth || "").split("-");
+  const year = Number.parseInt(yStr, 10);
+  const month = Number.parseInt(mStr, 10);
+  return {
+    year: Number.isNaN(year) ? null : year,
+    month: Number.isNaN(month) ? null : month,
+  };
+}
+
+export function CashbookPage() {
   const defaultMonth = useMemo(() => {
     const now = new Date();
     const y = now.getFullYear();
@@ -85,10 +99,18 @@ export  function CashbookPage() {
 
   const [selectedMonth, setSelectedMonth] = useState<string>(defaultMonth);
 
-  const { data, error, isLoading } = useSWR<CashbookResponse>(
-    `/api/cashbook?month=${selectedMonth}`,
-    fetcher
+  const { year, month } = useMemo(
+    () => parseSelectedMonthToYearMonth(selectedMonth),
+    [selectedMonth]
   );
+
+  const swrKey = useMemo(() => {
+    // ใช้รูปแบบที่ backend รองรับแน่นอน: year&month
+    if (!year || !month) return null;
+    return `/api/cashbook?year=${year}&month=${month}`;
+  }, [year, month]);
+
+  const { data, error, isLoading } = useSWR<CashbookResponse>(swrKey, fetcher);
 
   const summary = data?.summary || {
     totalIn: 0,
@@ -101,6 +123,8 @@ export  function CashbookPage() {
   };
 
   const entries = data?.entries || [];
+
+  const errorMessage = error ? getApiErrorMessage(error) : null;
 
   return (
     <div className="space-y-4">
@@ -176,13 +200,11 @@ export  function CashbookPage() {
             รายการเคลื่อนไหวเงินสด
           </h2>
           {isLoading && (
-            <span className="text-[11px] text-slate-400">
-              กำลังโหลดข้อมูล...
-            </span>
+            <span className="text-[11px] text-slate-400">กำลังโหลดข้อมูล...</span>
           )}
           {error && (
             <span className="text-[11px] text-red-500">
-              โหลดข้อมูลไม่สำเร็จ
+              โหลดข้อมูลไม่สำเร็จ{errorMessage ? `: ${errorMessage}` : ""}
             </span>
           )}
         </div>
@@ -242,6 +264,11 @@ export  function CashbookPage() {
                           {e.description}
                         </div>
                       )}
+                      {typeof e.profit === "number" && e.profit !== 0 && (
+                        <div className="mt-[2px] text-[10px] text-slate-500">
+                          กำไร (profit): {formatBaht(e.profit)} ฿
+                        </div>
+                      )}
                     </td>
                     <td className="px-3 py-2 align-top text-right text-[11px]">
                       <span
@@ -263,6 +290,7 @@ export  function CashbookPage() {
                       {e.inventoryTitle && (
                         <div className="text-[10px] text-slate-500">
                           สินค้า: {e.inventoryTitle}
+                          {e.inventoryInfo ? ` • ${e.inventoryInfo}` : ""}
                         </div>
                       )}
                       {!e.contractId && !e.inventoryTitle && (
@@ -279,4 +307,5 @@ export  function CashbookPage() {
     </div>
   );
 }
+
 export default CashbookPage;

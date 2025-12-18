@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useState } from "react";
-import axios from "axios";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { api, getApiErrorMessage } from "../../lib/api"; // ปรับ path ให้ตรงโปรเจกต์คุณ
 
 function fmtMoney(n: number) {
   const v = Number.isFinite(n) ? n : 0;
@@ -21,7 +21,13 @@ function fmtMonthLabel(m: string) {
   return d.toLocaleDateString("th-TH", { year: "numeric", month: "short" });
 }
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function Section({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
   return (
     <div className="mt-6">
       <div className="mb-3 text-lg font-semibold">{title}</div>
@@ -31,7 +37,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 }
 
 export default function AdminStatsPage() {
-  const now = new Date();
+  const now = useMemo(() => new Date(), []);
 
   const [mode, setMode] = useState<"month" | "year">("month");
   const [year, setYear] = useState<number>(now.getFullYear());
@@ -48,24 +54,38 @@ export default function AdminStatsPage() {
     return Array.from({ length: 6 }, (_, i) => y - i);
   }, [now]);
 
+  // กัน setState หลัง unmount
+  const aliveRef = useRef(true);
+  useEffect(() => {
+    aliveRef.current = true;
+    return () => {
+      aliveRef.current = false;
+    };
+  }, []);
+
   const fetchStats = async () => {
     try {
       setErr("");
       setLoading(true);
 
-      const res = await axios.get("/api/admin/stats", {
-        params: mode === "year" ? { mode, year } : { mode, year, month },
-      });
-      setData(res.data);
+      // ✅ ใช้ api instance เท่านั้น (baseURL = VITE_API_BASE_URL)
+      const params =
+        mode === "year" ? { mode, year } : { mode, year, month };
 
-      const s = await axios.get("/api/admin/stats/series", {
-        params: { mode: "month", year },
-      });
+      const [res, s] = await Promise.all([
+        api.get("/api/admin/stats", { params }),
+        api.get("/api/admin/stats/series", { params: { mode: "month", year } }),
+      ]);
+
+      if (!aliveRef.current) return;
+      setData(res.data);
       setSeries(s.data);
     } catch (e: any) {
       console.error(e);
-      setErr(e?.response?.data?.message || e?.message || "โหลดสถิติไม่สำเร็จ");
+      if (!aliveRef.current) return;
+      setErr(getApiErrorMessage(e) || "โหลดสถิติไม่สำเร็จ");
     } finally {
+      if (!aliveRef.current) return;
       setLoading(false);
     }
   };
@@ -81,8 +101,10 @@ export default function AdminStatsPage() {
   const deposit = data?.deposit || {};
 
   // 1) Summary
-  const activeContractsCount = overview?.activeContractsCount ?? data?.activeContractsCount ?? 0;
-  const latest = overview?.latestActiveContract ?? data?.latestActiveContract ?? null;
+  const activeContractsCount =
+    overview?.activeContractsCount ?? data?.activeContractsCount ?? 0;
+  const latest =
+    overview?.latestActiveContract ?? data?.latestActiveContract ?? null;
 
   // ✅ totals: รองรับทั้ง root และ overview
   const totalIn =
@@ -90,11 +112,14 @@ export default function AdminStatsPage() {
   const totalOut =
     data?.totalOut ?? overview?.totalOut ?? overview?.total_out ?? data?.total_out ?? 0;
   const totalProfit =
-    data?.totalProfit ?? overview?.totalProfit ?? overview?.total_profit ?? data?.total_profit ?? 0;
+    data?.totalProfit ??
+    overview?.totalProfit ??
+    overview?.total_profit ??
+    data?.total_profit ??
+    0;
 
   // 2) Deposit
-  const depositPaid =
-    deposit?.paidPrincipal ?? data?.depositPaid ?? 0;
+  const depositPaid = deposit?.paidPrincipal ?? data?.depositPaid ?? 0;
   const depositContractsCreated =
     deposit?.contractsCreated ?? data?.depositContractsCreated ?? 0;
   const depositServiceFeeIncome =
@@ -105,14 +130,12 @@ export default function AdminStatsPage() {
   const saleCount = trade?.saleCount ?? data?.saleCount ?? 0;
 
   // กำไรซื้อขาย “ขายปกติ”
-  const normalSaleProfit =
-    trade?.normalSaleProfit ?? data?.normalSaleProfit ?? 0;
+  const normalSaleProfit = trade?.normalSaleProfit ?? data?.normalSaleProfit ?? 0;
 
   // ฝากขาย
   const consCommission =
     trade?.consignmentCommission ?? data?.consignmentCommission ?? 0;
-  const consVat =
-    trade?.consignmentVat ?? data?.consignmentVat ?? 0;
+  const consVat = trade?.consignmentVat ?? data?.consignmentVat ?? 0;
 
   // label
   const rangeLabel = useMemo(() => {
@@ -125,7 +148,9 @@ export default function AdminStatsPage() {
       <div className="mx-auto max-w-6xl px-8 py-8">
         {/* Header + Filters */}
         <div className="mb-2 flex flex-wrap items-center justify-between gap-3">
-          <h1 className="text-2xl font-semibold">สรุปยอด / การเงิน (Admin Stats)</h1>
+          <h1 className="text-2xl font-semibold">
+            สรุปยอด / การเงิน (Admin Stats)
+          </h1>
 
           <div className="flex flex-wrap items-center gap-2">
             <select
@@ -165,9 +190,12 @@ export default function AdminStatsPage() {
 
             <button
               onClick={fetchStats}
-              className="rounded bg-slate-900 px-4 py-2 text-sm text-white hover:opacity-90"
+              disabled={loading}
+              className={`rounded bg-slate-900 px-4 py-2 text-sm text-white hover:opacity-90 ${
+                loading ? "opacity-70 cursor-not-allowed" : ""
+              }`}
             >
-              ดูสรุป
+              {loading ? "กำลังโหลด..." : "ดูสรุป"}
             </button>
           </div>
         </div>
@@ -190,7 +218,8 @@ export default function AdminStatsPage() {
                 ล่าสุด:{" "}
                 {latest ? (
                   <span className="text-slate-700">
-                    {latest.code} • {latest.customer?.name || "-"} • {fmtDate(latest.createdAt)}
+                    {latest.code} • {latest.customer?.name || "-"} •{" "}
+                    {fmtDate(latest.createdAt)}
                   </span>
                 ) : (
                   "-"
@@ -203,7 +232,9 @@ export default function AdminStatsPage() {
                 ยอดเงินเข้า {mode === "month" ? "เดือนนี้" : "ปีนี้"} (ทั้งหมด)
               </div>
               <div className="mt-2 text-3xl font-semibold">{fmtMoney(totalIn)}</div>
-              <div className="mt-3 text-xs text-slate-500">*sum(CashbookEntry.amount) type=IN</div>
+              <div className="mt-3 text-xs text-slate-500">
+                *sum(CashbookEntry.amount) type=IN
+              </div>
             </div>
 
             <div className="rounded-2xl bg-white p-6 shadow">
@@ -211,7 +242,9 @@ export default function AdminStatsPage() {
                 ยอดเงินจ่ายออก {mode === "month" ? "เดือนนี้" : "ปีนี้"} (ทั้งหมด)
               </div>
               <div className="mt-2 text-3xl font-semibold">{fmtMoney(totalOut)}</div>
-              <div className="mt-3 text-xs text-slate-500">*sum(CashbookEntry.amount) type=OUT</div>
+              <div className="mt-3 text-xs text-slate-500">
+                *sum(CashbookEntry.amount) type=OUT
+              </div>
             </div>
 
             <div className="rounded-2xl bg-white p-6 shadow">
@@ -219,7 +252,9 @@ export default function AdminStatsPage() {
                 กำไร {mode === "month" ? "เดือนนี้" : "ปีนี้"}
               </div>
               <div className="mt-2 text-3xl font-semibold">{fmtMoney(totalProfit)}</div>
-              <div className="mt-3 text-xs text-slate-500">*sum(CashbookEntry.profit) ทั้งหมดในช่วง</div>
+              <div className="mt-3 text-xs text-slate-500">
+                *sum(CashbookEntry.profit) ทั้งหมดในช่วง
+              </div>
             </div>
           </div>
         </Section>
@@ -233,14 +268,22 @@ export default function AdminStatsPage() {
             </div>
 
             <div className="rounded-2xl bg-white p-6 shadow">
-              <div className="text-sm text-slate-500">จำนวนสัญญาฝากดูแลที่สร้าง (ช่วงที่เลือก)</div>
+              <div className="text-sm text-slate-500">
+                จำนวนสัญญาฝากดูแลที่สร้าง (ช่วงที่เลือก)
+              </div>
               <div className="mt-2 text-3xl font-semibold">{depositContractsCreated}</div>
             </div>
 
             <div className="rounded-2xl bg-white p-6 shadow">
-              <div className="text-sm text-slate-500">รายได้ค่าบริการฝากดูแล (ช่วงที่เลือก)</div>
-              <div className="mt-2 text-3xl font-semibold">{fmtMoney(depositServiceFeeIncome)}</div>
-              <div className="mt-3 text-xs text-slate-500">*จาก Cashbook (contractId + หมวดค่าบริการ)</div>
+              <div className="text-sm text-slate-500">
+                รายได้ค่าบริการฝากดูแล (ช่วงที่เลือก)
+              </div>
+              <div className="mt-2 text-3xl font-semibold">
+                {fmtMoney(depositServiceFeeIncome)}
+              </div>
+              <div className="mt-3 text-xs text-slate-500">
+                *จาก Cashbook (contractId + หมวดค่าบริการ)
+              </div>
             </div>
           </div>
 
@@ -265,7 +308,9 @@ export default function AdminStatsPage() {
                   {(series?.depositSeries || []).map((r: any, i: number) => (
                     <tr key={i} className="border-t">
                       <td className="px-3 py-2">{fmtMonthLabel(r.m)}</td>
-                      <td className="px-3 py-2">{fmtMoney(Number(r.deposit_paid || 0))}</td>
+                      <td className="px-3 py-2">
+                        {fmtMoney(Number(r.deposit_paid || 0))}
+                      </td>
                       <td className="px-3 py-2">{Number(r.contracts_created || 0)}</td>
                     </tr>
                   ))}
@@ -288,13 +333,17 @@ export default function AdminStatsPage() {
             <div className="rounded-2xl bg-white p-6 shadow">
               <div className="text-sm text-slate-500">จำนวนครั้งรับซื้อ (ช่วงที่เลือก)</div>
               <div className="mt-2 text-3xl font-semibold">{buyInCount}</div>
-              <div className="mt-3 text-xs text-slate-500">*นับจาก Cashbook category=INVENTORY_BUY_IN (type=OUT)</div>
+              <div className="mt-3 text-xs text-slate-500">
+                *นับจาก Cashbook category=INVENTORY_BUY_IN (type=OUT)
+              </div>
             </div>
 
             <div className="rounded-2xl bg-white p-6 shadow">
               <div className="text-sm text-slate-500">จำนวนครั้งขาย (ช่วงที่เลือก)</div>
               <div className="mt-2 text-3xl font-semibold">{saleCount}</div>
-              <div className="mt-3 text-xs text-slate-500">*นับจาก Cashbook category=INVENTORY_SALE (type=IN)</div>
+              <div className="mt-3 text-xs text-slate-500">
+                *นับจาก Cashbook category=INVENTORY_SALE (type=IN)
+              </div>
             </div>
 
             <div className="rounded-2xl bg-white p-6 shadow">
@@ -319,9 +368,9 @@ export default function AdminStatsPage() {
             <div className="rounded-2xl bg-white p-6 shadow">
               <div className="mb-2 text-lg font-semibold">หมายเหตุ</div>
               <div className="text-sm text-slate-600">
-                ถ้าคุณอยาก “แยกค่าฝากขายออกเป็น 2 ส่วน” (คอมฯ + VAT) แบบบันทึกแยกแถวใน Cashbook
-                ควรเพิ่ม category เช่น <b>CONSIGNMENT_COMMISSION_FEE</b> และ <b>CONSIGNMENT_VAT</b> ได้
-                แต่ตอนนี้หน้าแสดงผลคำนวณให้แล้วจาก commission รวม
+                ถ้าคุณอยาก “แยกค่าฝากขายออกเป็น 2 ส่วน” (คอมฯ + VAT) แบบบันทึกแยกแถวใน
+                Cashbook ควรเพิ่ม category เช่น <b>CONSIGNMENT_COMMISSION_FEE</b> และ{" "}
+                <b>CONSIGNMENT_VAT</b> ได้ แต่ตอนนี้หน้าแสดงผลคำนวณให้แล้วจาก commission รวม
               </div>
             </div>
           </div>
@@ -333,7 +382,9 @@ export default function AdminStatsPage() {
           ) : null}
         </Section>
 
-        {loading ? <div className="mt-4 text-sm text-slate-500">กำลังโหลด...</div> : null}
+        {loading ? (
+          <div className="mt-4 text-sm text-slate-500">กำลังโหลด...</div>
+        ) : null}
       </div>
     </div>
   );
