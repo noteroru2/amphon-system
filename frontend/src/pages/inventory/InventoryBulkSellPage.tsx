@@ -9,25 +9,15 @@ type SellableItem = {
   code: string;
   name: string;
   serial?: string | null;
-
   cost: number;
   targetPrice: number;
   sellingPrice: number;
-
   quantity: number;
   quantityAvailable: number;
   quantitySold: number;
-
   status: string;
   sourceType: string;
   createdAt: string;
-};
-
-type BulkReceiptItem = {
-  id: number;
-  title: string;
-  serial?: string;
-  price: number; // ✅ จำนวนเงินต่อรายการ (qty*unitPrice)
 };
 
 type BuyerInfo = {
@@ -35,6 +25,7 @@ type BuyerInfo = {
   phone?: string;
   address?: string;
   taxId?: string;
+  idCard?: string; // (optional future)
 };
 
 const fmtMoney = (n: any) => {
@@ -57,17 +48,10 @@ const InventoryBulkSellPage: React.FC = () => {
 
   const [loading, setLoading] = useState(false);
   const [items, setItems] = useState<SellableItem[]>([]);
-
-  // selection
   const [selected, setSelected] = useState<Set<number>>(new Set());
-
-  // per-row qty
   const [draftQty, setDraftQty] = useState<Record<number, number>>({});
-
-  // per-row price (ต่อชิ้น)
   const [draftPrice, setDraftPrice] = useState<Record<number, number>>({});
 
-  // buyer
   const [buyerName, setBuyerName] = useState("");
   const [buyerPhone, setBuyerPhone] = useState("");
   const [buyerAddress, setBuyerAddress] = useState("");
@@ -78,13 +62,11 @@ const InventoryBulkSellPage: React.FC = () => {
   const fetchSellable = async () => {
     try {
       setLoading(true);
-
-      const { data } = await api.get<SellableItem[]>(`/api/inventory?t=${Date.now()}`);
+      const { data } = await api.get<SellableItem[]>(`/api/inventory`);
       const list = (data || []).filter((it) => Number(it.quantityAvailable ?? 0) > 0);
 
       setItems(list);
 
-      // default qty=1 + default price
       const nextQty: Record<number, number> = {};
       const nextPrice: Record<number, number> = {};
       for (const it of list) {
@@ -104,7 +86,6 @@ const InventoryBulkSellPage: React.FC = () => {
 
   useEffect(() => {
     fetchSellable();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const toggleSelect = (id: number) => {
@@ -125,8 +106,6 @@ const InventoryBulkSellPage: React.FC = () => {
     });
   };
 
-  const selectedCount = selected.size;
-
   const totals = useMemo(() => {
     let qtyTotal = 0;
     let amountTotal = 0;
@@ -138,7 +117,6 @@ const InventoryBulkSellPage: React.FC = () => {
       qtyTotal += qty;
       amountTotal += qty * (Number.isFinite(price) ? price : 0);
     }
-
     return { qtyTotal, amountTotal };
   }, [items, selected, draftQty, draftPrice]);
 
@@ -163,7 +141,6 @@ const InventoryBulkSellPage: React.FC = () => {
       return;
     }
 
-    // build payload สำหรับ bulk-sell
     const payloadItems: { id: number; quantity: number; sellingPrice: number }[] = [];
 
     for (const it of items) {
@@ -200,44 +177,32 @@ const InventoryBulkSellPage: React.FC = () => {
         taxId: buyerTaxId || undefined,
       };
 
-      // ✅ ยิงครั้งเดียว ไป bulk-sell
-      const resp = await api.post(`/api/inventory/bulk-sell`, {
-        items: payloadItems,
-        buyer,
+      await api.post(`/api/inventory/bulk-sell`, { items: payloadItems, buyer });
+
+      // ✅ ส่ง unitPrice + quantity ให้ print (สำคัญ)
+      const receiptItems = payloadItems.map((p) => {
+        const it = items.find((x) => x.id === p.id);
+        return {
+          id: p.id,
+          title: it?.name || "-",
+          serial: it?.serial || undefined,
+          unitPrice: Number(p.sellingPrice ?? 0),
+          quantity: Math.max(1, Number(p.quantity)),
+        };
       });
 
-      // ✅ สร้างรายการสำหรับพิมพ์ใบเสร็จตาม printHelpers.ts ของคุณ
-      // printBulkSellReceipt(items: [{id,title,serial,price}], buyer)
-      // หลังยิง bulk-sell สำเร็จ (resp ok แล้ว)
-const receiptItems = payloadItems.map((p) => {
-  const it = items.find((x) => x.id === p.id);
-
-  return {
-    id: p.id,
-    title: it?.name || "-",
-    serial: it?.serial || undefined,
-    unitPrice: Number(p.sellingPrice ?? 0),     // ✅ ราคาต่อชิ้น
-    quantity: Math.max(1, Number(p.quantity)),  // ✅ จำนวนที่ขาย
-  };
-});
-
-printBulkSellReceipt(receiptItems as any, buyer);
-navigate("/app/inventory");
-
-
-
-      alert("บันทึกการขายเรียบร้อย");
+      printBulkSellReceipt(receiptItems as any, buyer);
       navigate("/app/inventory");
     } catch (err: any) {
       console.error("ขายหลายชิ้นล้มเหลว:", err);
-      const msg =
-        err?.response?.data?.message ||
-        "ไม่สามารถบันทึกการขาย (bulk) ได้";
+      const msg = err?.response?.data?.message || "ไม่สามารถบันทึกการขาย (bulk) ได้";
       alert(msg);
     } finally {
       setSubmitting(false);
     }
   };
+
+  const selectedCount = selected.size;
 
   return (
     <div className={pageWrap}>
@@ -246,9 +211,7 @@ navigate("/app/inventory");
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <div>
             <h1 className="text-xl font-semibold text-slate-800">เปิดบิลขายจากคลัง (หลายชิ้น)</h1>
-            <p className="text-sm text-slate-500">
-              เลือกสินค้า ระบุจำนวน/ราคาต่อชิ้น แล้วพิมพ์ใบเสร็จครั้งเดียว
-            </p>
+            <p className="text-sm text-slate-500">เลือกสินค้า ระบุจำนวน/ราคาต่อชิ้น แล้วพิมพ์ใบเสร็จครั้งเดียว</p>
           </div>
 
           <div className="flex items-center gap-2">
@@ -323,7 +286,6 @@ navigate("/app/inventory");
             </div>
           </div>
 
-          {/* Header row */}
           <div className="grid grid-cols-12 gap-2 border-b border-slate-200 px-5 py-3 text-xs font-medium text-slate-500">
             <div className="col-span-1 flex items-center justify-center">
               <input
@@ -340,13 +302,10 @@ navigate("/app/inventory");
             <div className="col-span-2 text-right">ราคาขาย/ชิ้น</div>
           </div>
 
-          {/* Body */}
           {loading ? (
             <div className="px-5 py-10 text-center text-sm text-slate-500">กำลังโหลดข้อมูล...</div>
           ) : items.length === 0 ? (
-            <div className="px-5 py-10 text-center text-sm text-slate-500">
-              ไม่มีสินค้าพร้อมขาย (คงเหลือ &gt; 0)
-            </div>
+            <div className="px-5 py-10 text-center text-sm text-slate-500">ไม่มีสินค้าพร้อมขาย (คงเหลือ &gt; 0)</div>
           ) : (
             <div>
               {items.map((it) => {
@@ -364,11 +323,7 @@ navigate("/app/inventory");
                     } border-t border-slate-100`}
                   >
                     <div className="col-span-1 flex items-center justify-center">
-                      <input
-                        type="checkbox"
-                        checked={isChecked}
-                        onChange={() => toggleSelect(it.id)}
-                      />
+                      <input type="checkbox" checked={isChecked} onChange={() => toggleSelect(it.id)} />
                     </div>
 
                     <div className="col-span-1 text-slate-700">{it.id}</div>
@@ -382,10 +337,7 @@ navigate("/app/inventory");
                         {isChecked && (
                           <>
                             <span className="mx-2">•</span>
-                            รวมแถวนี้:{" "}
-                            <span className="font-semibold text-slate-800">
-                              {fmtMoney(rowTotal)}
-                            </span>
+                            รวมแถวนี้: <span className="font-semibold text-slate-800">{fmtMoney(rowTotal)}</span>
                           </>
                         )}
                       </div>
@@ -395,9 +347,7 @@ navigate("/app/inventory");
                       {it.serial ? <span className="font-mono">{it.serial}</span> : "-"}
                     </div>
 
-                    <div className="col-span-1 text-right text-slate-700">
-                      {Number(it.quantityAvailable ?? 0)}
-                    </div>
+                    <div className="col-span-1 text-right text-slate-700">{Number(it.quantityAvailable ?? 0)}</div>
 
                     <div className="col-span-1 flex justify-center">
                       <input
@@ -426,20 +376,18 @@ navigate("/app/inventory");
             </div>
           )}
 
-          {/* Footer summary */}
           <div className="flex flex-col gap-3 border-t border-slate-200 px-5 py-4 md:flex-row md:items-center md:justify-between">
             <div className="text-sm text-slate-600">
-              จำนวนที่เลือกขาย:{" "}
-              <span className="font-semibold text-slate-800">{selectedCount}</span> รายการ •{" "}
-              รวม <span className="font-semibold text-slate-800">{totals.qtyTotal}</span> ชิ้น
+              จำนวนที่เลือกขาย: <span className="font-semibold text-slate-800">{selectedCount}</span> รายการ • รวม{" "}
+              <span className="font-semibold text-slate-800">{totals.qtyTotal}</span> ชิ้น
             </div>
+
             <div className="flex items-center justify-between gap-4">
               <div className="text-right">
                 <div className="text-xs text-slate-500">ยอดรวมโดยประมาณ</div>
-                <div className="text-xl font-semibold text-slate-800">
-                  {fmtMoney(totals.amountTotal)} บาท
-                </div>
+                <div className="text-xl font-semibold text-slate-800">{fmtMoney(totals.amountTotal)} บาท</div>
               </div>
+
               <button
                 type="button"
                 onClick={handleSubmit}

@@ -1,7 +1,7 @@
 // src/inventory/InventorySellPage.tsx
+import React, { useEffect, useState } from "react";
 import { useParams, useNavigate } from "react-router-dom";
 import useSWR from "swr";
-import { useEffect, useState } from "react";
 import { printReceipt } from "../../utils/printHelpers";
 import { api } from "../../lib/api";
 
@@ -27,19 +27,18 @@ const InventorySellPage: React.FC = () => {
   const { id } = useParams();
   const navigate = useNavigate();
 
-  // ✅ key ต้องนิ่ง ห้ามมี Date.now()
   const swrKey = id ? `/api/inventory/${id}` : null;
 
   const { data: item, isLoading, mutate } = useSWR<ItemDetail>(swrKey, fetcher, {
     revalidateOnFocus: false,
     revalidateOnReconnect: false,
     refreshInterval: 0,
-    dedupingInterval: 10_000, // กันยิงซ้ำถี่ๆ
+    dedupingInterval: 10_000,
     shouldRetryOnError: false,
   });
 
-  const [price, setPrice] = useState("");
-  const [sellQty, setSellQty] = useState(1);
+  const [price, setPrice] = useState<string>("");
+  const [sellQty, setSellQty] = useState<number>(1);
 
   const [buyerName, setBuyerName] = useState("");
   const [buyerPhone, setBuyerPhone] = useState("");
@@ -48,7 +47,6 @@ const InventorySellPage: React.FC = () => {
 
   const [submitting, setSubmitting] = useState(false);
 
-  // ✅ ตั้งค่า default เมื่อโหลด item เสร็จ (ครั้งแรก)
   useEffect(() => {
     if (!item) return;
 
@@ -56,8 +54,8 @@ const InventorySellPage: React.FC = () => {
       item.sellingPrice && item.sellingPrice > 0
         ? item.sellingPrice
         : item.targetPrice && item.targetPrice > 0
-          ? item.targetPrice
-          : item.cost;
+        ? item.targetPrice
+        : item.cost;
 
     setPrice(String(initial || ""));
     setBuyerName(item.buyerName || "");
@@ -65,7 +63,7 @@ const InventorySellPage: React.FC = () => {
     setBuyerAddress(item.buyerAddress || "");
     setBuyerTaxId(item.buyerTaxId || "");
     setSellQty(1);
-  }, [item?.id]); // ✅ อย่าผูกกับ item ทั้งก้อน (กัน reset ตอน mutate)
+  }, [item?.id]);
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -91,7 +89,6 @@ const InventorySellPage: React.FC = () => {
 
     setSubmitting(true);
     try {
-      // 1) บันทึกการขาย
       await api.post(`/api/inventory/${item.id}/sell`, {
         sellingPrice: numPrice,
         quantity: qty,
@@ -101,10 +98,8 @@ const InventorySellPage: React.FC = () => {
         buyerTaxId: buyerTaxId || null,
       });
 
-      // 2) รีเฟรชข้อมูลล่าสุด (ครั้งเดียวพอ)
       await mutate();
 
-      // 3) พิมพ์ใบเสร็จ (ยอดรวมจริง)
       const totalAmount = numPrice * qty;
 
       printReceipt(
@@ -147,16 +142,12 @@ const InventorySellPage: React.FC = () => {
         <div className="bg-slate-900 px-6 py-4 text-white">
           <div className="text-[11px] text-slate-300">แจ้งขายสินค้า</div>
           <div className="text-sm font-semibold">{title}</div>
-          {item.serial && (
-            <div className="text-[11px] text-slate-400">SN: {item.serial}</div>
-          )}
+          {item.serial && <div className="text-[11px] text-slate-400">SN: {item.serial}</div>}
         </div>
 
         <form onSubmit={onSubmit} className="space-y-4 px-6 py-5 text-xs">
           <div>
-            <label className="block text-[11px] font-medium text-slate-700">
-              ราคาขายต่อชิ้น
-            </label>
+            <label className="block text-[11px] font-medium text-slate-700">ราคาขายต่อชิ้น</label>
             <input
               type="number"
               className="mt-1 w-full rounded-xl border px-3 py-2 font-semibold"
@@ -164,9 +155,7 @@ const InventorySellPage: React.FC = () => {
               onChange={(e) => setPrice(e.target.value)}
             />
 
-            <label className="mt-3 block text-[11px] font-medium text-slate-700">
-              จำนวนที่ขาย
-            </label>
+            <label className="mt-3 block text-[11px] font-medium text-slate-700">จำนวนที่ขาย</label>
             <input
               type="number"
               min={1}
