@@ -1,6 +1,7 @@
 import React, { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { api } from "../../lib/api";
+import { api } from "../lib/api";
+
 
 type ConditionKey = "90_95" | "80_89" | "70_79" | "UNKNOWN";
 type AccessoriesKey = "FULL_BOX" | "BODY_ONLY" | "WITH_CHARGER" | "UNKNOWN";
