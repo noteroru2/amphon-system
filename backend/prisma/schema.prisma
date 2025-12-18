@@ -26,7 +26,7 @@ enum ContractStatus {
 enum InventorySourceType {
   FORFEIT // ทรัพย์จากการตัดหลุดสัญญา
   PURCHASE // ซื้อเข้าร้าน
-  CONSIGNMENT// ฝากขาย
+  CONSIGNMENT // ฝากขาย
   OTHER
 }
 
@@ -57,7 +57,9 @@ model Customer {
   contracts Contract[]
 
   inventoryItemsBought InventoryItem[] @relation("InventoryBuyer")
-  inventoryItemsSold  InventoryItem[] @relation("InventorySeller")
+  inventoryItemsSold   InventoryItem[] @relation("InventorySeller")
+
+  consignmentContracts ConsignmentContract[] @relation("ConsignmentSeller")
 }
 
 model Contract {
@@ -157,7 +159,6 @@ model InventoryItem {
   // ✅ ผู้ขายให้ร้าน (ตอนรับซื้อเข้า)
   sellerCustomerId Int?
   sellerCustomer   Customer? @relation("InventorySeller", fields: [sellerCustomerId], references: [id])
-  
 
   // ผู้ซื้อ (ตอนขายออก)
   buyerName       String?
@@ -232,25 +233,28 @@ model ConsignmentContract {
 
   inventoryItemId Int?           @unique
   inventoryItem   InventoryItem? @relation(fields: [inventoryItemId], references: [id])
+
+  sellerCustomerId Int?
+  sellerCustomer   Customer? @relation("ConsignmentSeller", fields: [sellerCustomerId], references: [id])
 }
 
 model PriceSuggestion {
-  id        Int      @id @default(autoincrement())
-  itemName  String
-  brand     String?
-  model     String?
-  spec      String?
-  condition String?
+  id          Int     @id @default(autoincrement())
+  itemName    String
+  brand       String?
+  model       String?
+  spec        String?
+  condition   String?
   accessories String?
-  notes     String?
+  notes       String?
 
   // ผลลัพธ์ AI
-  appraisedMin Decimal? @db.Decimal(12,2)
-  appraisedMax Decimal? @db.Decimal(12,2)
-  appraisedPrice Decimal? @db.Decimal(12,2)
-  targetPrice Decimal? @db.Decimal(12,2)
-  confidence Int? // 0-100
-  rationale  String?
+  appraisedMin   Decimal? @db.Decimal(12, 2)
+  appraisedMax   Decimal? @db.Decimal(12, 2)
+  appraisedPrice Decimal? @db.Decimal(12, 2)
+  targetPrice    Decimal? @db.Decimal(12, 2)
+  confidence     Int? // 0-100
+  rationale      String?
 
   // อ้างอิง context ภายในระบบ
   refs Json? // เช่นตัวอย่าง inventoryItem ที่คล้ายกัน

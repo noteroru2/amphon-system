@@ -129,7 +129,7 @@ router.post("/", async (req, res) => {
           sellerIdCard: sellerIdCard?.trim() || null,
           sellerPhone: sellerPhone?.trim() || null,
           sellerAddress: sellerAddress?.trim() || null,
-
+          sellerCustomerId: customer.id,
           itemName: itemName.trim(),
           serial: serial?.trim() || null,
           condition: condition?.trim() || null,
