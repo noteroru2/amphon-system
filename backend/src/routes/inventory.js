@@ -28,65 +28,66 @@ const normalizeStatus = (item) => {
   return item.status || "IN_STOCK";
 };
 
-// ✅ helper: find/create buyer customer (ใช้ใน sell เดี่ยว + bulk)
-async function resolveBuyerCustomer(tx, buyer = {}) {
-  const buyerName = (buyer.name || "").toString().trim();
-  const buyerPhone = (buyer.phone || "").toString().trim();
-  const buyerAddress = (buyer.address || "").toString().trim();
-  const buyerTaxId = (buyer.taxId || "").toString().trim();
-  const buyerIdCard = (buyer.idCard || "").toString().trim(); // optional
+// ✅ upsert buyer customer ตาม schema จริง (idCard unique, phone ไม่ unique)
+async function upsertBuyerCustomer(tx, buyer) {
+  const name = (buyer?.name || "").toString().trim();
+  const phone = (buyer?.phone || "").toString().trim();
+  const idCard = (buyer?.idCard || "").toString().trim(); // optional
+  const address = (buyer?.address || "").toString().trim();
 
-  let buyerCustomer = null;
+  // ถ้าไม่กรอกอะไรเลย → ไม่สร้าง customer
+  if (!idCard && !phone && !name) return null;
 
-  // idCard unique -> ใช้ได้ชัวร์
-  if (buyerIdCard) {
-    buyerCustomer = await tx.customer.upsert({
-      where: { idCard: buyerIdCard },
+  // 1) มี idCard → upsert by idCard (unique)
+  if (idCard) {
+    return tx.customer.upsert({
+      where: { idCard },
       update: {
-        name: buyerName || undefined,
-        phone: buyerPhone || undefined,
-        address: buyerAddress || undefined,
+        name: name || undefined,
+        phone: phone || undefined,
+        address: address || undefined,
       },
       create: {
-        name: buyerName || "ลูกค้า",
-        idCard: buyerIdCard,
-        phone: buyerPhone || null,
-        address: buyerAddress || null,
-        lineId: null,
-        lineToken: null,
+        name: name || "ลูกค้า",
+        idCard,
+        phone: phone || null,
+        address: address || null,
       },
     });
-    return buyerCustomer;
   }
 
-  // phone ไม่ unique -> findFirst แล้ว update/create
-  if (buyerPhone) {
-    buyerCustomer = await tx.customer.findFirst({ where: { phone: buyerPhone } });
-    if (!buyerCustomer) {
-      buyerCustomer = await tx.customer.create({
+  // 2) ไม่มี idCard แต่มี phone → phone ไม่ unique เลยใช้ findFirst
+  if (phone) {
+    const found = await tx.customer.findFirst({ where: { phone } });
+    if (!found) {
+      return tx.customer.create({
         data: {
-          name: buyerName || "ลูกค้า",
-          phone: buyerPhone,
-          address: buyerAddress || null,
-          lineId: null,
-          lineToken: null,
-        },
-      });
-    } else if (buyerName || buyerAddress) {
-      buyerCustomer = await tx.customer.update({
-        where: { id: buyerCustomer.id },
-        data: {
-          name: buyerName || buyerCustomer.name,
-          address: buyerAddress || buyerCustomer.address,
+          name: name || "ลูกค้า",
+          phone,
+          address: address || null,
         },
       });
     }
+    // อัปเดตถ้ามีข้อมูลใหม่
+    if (name || address) {
+      return tx.customer.update({
+        where: { id: found.id },
+        data: {
+          name: name || found.name,
+          address: address || found.address,
+        },
+      });
+    }
+    return found;
   }
 
-  return buyerCustomer;
+  // 3) มีแค่ชื่อ → สร้าง customer ใหม่
+  return tx.customer.create({
+    data: { name: name || "ลูกค้า" },
+  });
 }
 
-// -------- 1) LIST: GET /api/inventory --------
+// -------- 1) LIST --------
 router.get("/", async (req, res) => {
   try {
     const items = await prisma.inventoryItem.findMany({
@@ -136,7 +137,7 @@ router.get("/", async (req, res) => {
   }
 });
 
-// -------- 2) DETAIL: GET /api/inventory/:id --------
+// -------- 2) DETAIL --------
 router.get("/:id", async (req, res) => {
   try {
     const id = Number(req.params.id);
@@ -162,6 +163,7 @@ router.get("/:id", async (req, res) => {
         buyerPhone: true,
         buyerAddress: true,
         buyerTaxId: true,
+        buyerCustomerId: true,
         grossProfit: true,
         netProfit: true,
         createdAt: true,
@@ -192,6 +194,7 @@ router.get("/:id", async (req, res) => {
       buyerPhone: it.buyerPhone || null,
       buyerAddress: it.buyerAddress || null,
       buyerTaxId: it.buyerTaxId || null,
+      buyerCustomerId: it.buyerCustomerId || null,
       grossProfit: toNumber(it.grossProfit),
       netProfit: toNumber(it.netProfit),
       createdAt: it.createdAt,
@@ -203,13 +206,15 @@ router.get("/:id", async (req, res) => {
   }
 });
 
-// -------- 3) SELL: POST /api/inventory/:id/sell --------
+// -------- 3) SELL (single) --------
 router.post("/:id/sell", async (req, res) => {
   try {
     const id = Number(req.params.id);
     if (!Number.isFinite(id)) return res.status(400).json({ message: "id ไม่ถูกต้อง" });
 
-    const { sellingPrice, quantity = 1, buyerName, buyerPhone, buyerAddress, buyerTaxId } = req.body || {};
+    const { sellingPrice, quantity = 1, buyerName, buyerPhone, buyerAddress, buyerTaxId, buyerIdCard } =
+      req.body || {};
+
     const qty = Number(quantity ?? 1);
     const price = Number(sellingPrice ?? 0);
 
@@ -243,7 +248,6 @@ router.post("/:id/sell", async (req, res) => {
 
       const available = getAvailable(item);
       const sold = Number(item.quantitySold ?? 0);
-
       if (available <= 0 || item.status === "SOLD") {
         const e = new Error("OUT_OF_STOCK");
         e.code = "OUT_OF_STOCK";
@@ -256,12 +260,12 @@ router.post("/:id/sell", async (req, res) => {
         throw e;
       }
 
-      // ✅ resolve buyer customer -> ทำให้ BUYER segment ขึ้น
-      const buyerCustomer = await resolveBuyerCustomer(tx, {
+      // ✅ upsert buyer customer แล้วผูก buyerCustomerId
+      const buyerCustomer = await upsertBuyerCustomer(tx, {
         name: buyerName,
         phone: buyerPhone,
+        idCard: buyerIdCard,
         address: buyerAddress,
-        taxId: buyerTaxId,
       });
 
       const newAvailable = available - qty;
@@ -289,7 +293,7 @@ router.post("/:id/sell", async (req, res) => {
           buyerPhone: buyerPhone ?? null,
           buyerAddress: buyerAddress ?? null,
           buyerTaxId: buyerTaxId ?? null,
-          buyerCustomerId: buyerCustomer ? buyerCustomer.id : null, // ✅ สำคัญ
+          buyerCustomerId: buyerCustomer ? buyerCustomer.id : null, // ✅ จุดสำคัญ
 
           grossProfit: prevGross + profitThisSale,
           netProfit: prevNet + profitThisSale,
@@ -311,47 +315,28 @@ router.post("/:id/sell", async (req, res) => {
     });
 
     const availableAfter = getAvailable(result);
-
-    res.json({
+    return res.json({
+      ok: true,
       id: result.id,
-      code: result.code,
       name: result.name,
-      title: result.name,
-      serial: result.serial,
-      status: normalizeStatus({ ...result, quantityAvailable: availableAfter }),
-      sourceType: result.sourceType || "-",
-      cost: toNumber(result.cost),
-      targetPrice: toNumber(result.targetPrice),
-      sellingPrice: toNumber(result.sellingPrice),
-      quantity: Number(result.quantity ?? 1),
+      code: result.code,
       quantityAvailable: Number(availableAfter),
       quantitySold: Number(result.quantitySold ?? 0),
-      buyerName: result.buyerName || null,
-      buyerPhone: result.buyerPhone || null,
-      buyerAddress: result.buyerAddress || null,
-      buyerTaxId: result.buyerTaxId || null,
-      grossProfit: toNumber(result.grossProfit),
-      netProfit: toNumber(result.netProfit),
-      createdAt: result.createdAt,
-      updatedAt: result.updatedAt,
+      status: normalizeStatus({ ...result, quantityAvailable: availableAfter }),
     });
   } catch (err) {
     console.error("POST /api/inventory/:id/sell error:", err);
-
-    if (err?.code === "NOT_FOUND" || String(err?.message) === "NOT_FOUND") return res.status(404).json({ message: "ไม่พบสินค้า" });
-    if (err?.code === "OUT_OF_STOCK" || String(err?.message) === "OUT_OF_STOCK") return res.status(400).json({ message: "สินค้าหมดสต๊อกแล้ว" });
-    if (err?.code === "QTY_EXCEED" || String(err?.message) === "QTY_EXCEED")
-      return res.status(400).json({ message: "จำนวนขายมากกว่าสต๊อกที่เหลือ", available: err.available ?? undefined });
-
-    res.status(500).json({ message: "บันทึกการขายไม่สำเร็จ", error: String(err) });
+    if (err?.code === "NOT_FOUND") return res.status(404).json({ message: "ไม่พบสินค้า" });
+    if (err?.code === "OUT_OF_STOCK") return res.status(400).json({ message: "สินค้าหมดสต๊อกแล้ว" });
+    if (err?.code === "QTY_EXCEED") return res.status(400).json({ message: "จำนวนขายมากกว่าสต๊อกที่เหลือ", available: err.available });
+    return res.status(500).json({ message: "บันทึกการขายไม่สำเร็จ", error: String(err) });
   }
 });
 
-// -------- 4) BULK SELL: POST /api/inventory/bulk-sell --------
+// -------- 4) BULK SELL --------
 router.post("/bulk-sell", async (req, res) => {
   try {
     const { items, buyer } = req.body || {};
-
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ message: "items ต้องเป็น array และห้ามว่าง" });
     }
@@ -369,8 +354,8 @@ router.post("/bulk-sell", async (req, res) => {
     }
 
     const result = await prisma.$transaction(async (tx) => {
-      // ✅ resolve buyer customer ครั้งเดียว (สำคัญ + เร็ว)
-      const buyerCustomer = await resolveBuyerCustomer(tx, buyer || {});
+      // ✅ upsert buyer ครั้งเดียว แล้วเอา id ไปผูกทุกชิ้น
+      const buyerCustomer = await upsertBuyerCustomer(tx, buyer);
 
       const soldItems = [];
       let grandTotal = 0;
@@ -385,7 +370,6 @@ router.post("/bulk-sell", async (req, res) => {
             name: true,
             serial: true,
             status: true,
-            sourceType: true,
             cost: true,
             quantity: true,
             quantityAvailable: true,
@@ -402,10 +386,6 @@ router.post("/bulk-sell", async (req, res) => {
           throw e;
         }
 
-        const totalQty = Math.max(Number(item.quantity ?? 1), 1);
-        const totalCost = toNumber(item.cost);
-        const unitCost = totalQty > 1 && totalCost > 0 ? totalCost / totalQty : totalCost;
-
         const available = getAvailable(item);
         if (available <= 0 || item.status === "SOLD") {
           const e = new Error("OUT_OF_STOCK");
@@ -420,6 +400,10 @@ router.post("/bulk-sell", async (req, res) => {
           e.available = available;
           throw e;
         }
+
+        const totalQty = Math.max(Number(item.quantity ?? 1), 1);
+        const totalCost = toNumber(item.cost);
+        const unitCost = totalQty > 1 && totalCost > 0 ? totalCost / totalQty : totalCost;
 
         const amount = reqIt.sellingPrice * reqIt.quantity;
         const profitThis = (reqIt.sellingPrice - unitCost) * reqIt.quantity;
@@ -443,7 +427,7 @@ router.post("/bulk-sell", async (req, res) => {
             buyerPhone: buyer?.phone ?? null,
             buyerAddress: buyer?.address ?? null,
             buyerTaxId: buyer?.taxId ?? null,
-            buyerCustomerId: buyerCustomer ? buyerCustomer.id : null, // ✅ ทำให้ BUYER segment ขึ้น
+            buyerCustomerId: buyerCustomer ? buyerCustomer.id : null, // ✅ จุดสำคัญ
 
             grossProfit: prevGross + profitThis,
             netProfit: prevNet + profitThis,
@@ -477,18 +461,15 @@ router.post("/bulk-sell", async (req, res) => {
         grandProfit += profitThis;
       }
 
-      return { soldItems, grandTotal, grandProfit };
+      return { soldItems, grandTotal, grandProfit, buyerCustomerId: buyerCustomer?.id ?? null };
     });
 
     return res.json({ ok: true, ...result });
   } catch (err) {
     console.error("POST /api/inventory/bulk-sell error:", err);
-
     if (err?.code === "NOT_FOUND") return res.status(404).json({ message: "ไม่พบสินค้า", itemId: err.itemId });
     if (err?.code === "OUT_OF_STOCK") return res.status(400).json({ message: "สินค้าหมดสต๊อกแล้ว", itemId: err.itemId });
-    if (err?.code === "QTY_EXCEED")
-      return res.status(400).json({ message: "จำนวนขายมากกว่าสต๊อกที่เหลือ", itemId: err.itemId, available: err.available });
-
+    if (err?.code === "QTY_EXCEED") return res.status(400).json({ message: "จำนวนขายมากกว่าสต๊อกที่เหลือ", itemId: err.itemId, available: err.available });
     return res.status(500).json({ message: "ขายหลายชิ้นไม่สำเร็จ", error: String(err) });
   }
 });

@@ -1,21 +1,24 @@
+// backend/src/routes/customers.js
 import express from "express";
 import { prisma } from "../db.js";
 
 const router = express.Router();
 
-/**
- * segments:
- * - BUYER: ลูกค้าที่เคย "ซื้อ" (มี inventoryItemsBought อย่างน้อย 1)
- *   * relation นี้มาจาก InventoryItem.buyerCustomerId -> Customer (InventoryBuyer)
- * - DEPOSITOR: ลูกค้าที่เคย "ฝากดูแล" (มี contracts.type = DEPOSIT)
- * - CONSIGNOR: ลูกค้าที่เคย "ขาย/ฝากขาย" (match จาก ConsignmentContract sellerPhone/sellerIdCard)
- */
-
 router.get("/", async (req, res) => {
   try {
     const q = (req.query.q || "").toString().trim();
 
-    // 1) ดึงลูกค้า + relation ที่มีจริง
+    // ✅ index consignor จาก ConsignmentContract (schema มีจริง)
+    const consignmentByIdCard = new Map();
+    const consignmentByPhone = new Map();
+    const consignments = await prisma.consignmentContract.findMany({
+      select: { sellerIdCard: true, sellerPhone: true },
+    });
+    for (const c of consignments) {
+      if (c.sellerIdCard) consignmentByIdCard.set(String(c.sellerIdCard).trim(), true);
+      if (c.sellerPhone) consignmentByPhone.set(String(c.sellerPhone).trim(), true);
+    }
+
     const customers = await prisma.customer.findMany({
       where: q
         ? {
@@ -28,48 +31,28 @@ router.get("/", async (req, res) => {
           }
         : undefined,
       include: {
-        contracts: {
-          select: { id: true, type: true },
-        },
-        inventoryItemsBought: {
-          select: { id: true },
-          take: 1, // แค่เช็คว่ามีหรือไม่มี
-        },
+        contracts: { select: { id: true, type: true } },
+        inventoryItemsBought: { select: { id: true }, take: 1 }, // ✅ BUYER จาก buyerCustomerId
       },
       orderBy: { createdAt: "desc" },
     });
 
-    // 2) ทำ index สำหรับ CONSIGNOR จาก ConsignmentContract (schema มีจริง)
-    const consignmentByIdCard = new Map();
-    const consignmentByPhone = new Map();
-
-    const consignments = await prisma.consignmentContract.findMany({
-      select: { sellerIdCard: true, sellerPhone: true },
-    });
-
-    for (const c of consignments) {
-      if (c.sellerIdCard) consignmentByIdCard.set(String(c.sellerIdCard).trim(), true);
-      if (c.sellerPhone) consignmentByPhone.set(String(c.sellerPhone).trim(), true);
-    }
-
-    // 3) สร้าง rows + segments
     const rows = customers.map((c) => {
       const segments = [];
 
       // BUYER
       if (c.inventoryItemsBought?.length > 0) segments.push("BUYER");
 
-      // DEPOSITOR (enum ของคุณมีแค่ DEPOSIT/CONSIGNMENT)
+      // DEPOSITOR (schema ของคุณมี DEPOSIT เท่านั้น)
       const isDepositor = (c.contracts || []).some((ct) => ct.type === "DEPOSIT");
       if (isDepositor) segments.push("DEPOSITOR");
 
-      // CONSIGNOR (match ด้วย idCard/phone)
+      // CONSIGNOR (ฝากขาย) จาก ConsignmentContract seller
       const idCardKey = c.idCard ? String(c.idCard).trim() : "";
       const phoneKey = c.phone ? String(c.phone).trim() : "";
       const isConsignor =
         (idCardKey && consignmentByIdCard.has(idCardKey)) ||
         (phoneKey && consignmentByPhone.has(phoneKey));
-
       if (isConsignor) segments.push("CONSIGNOR");
 
       return {
@@ -87,44 +70,28 @@ router.get("/", async (req, res) => {
     return res.json(rows);
   } catch (err) {
     console.error("GET /api/customers error:", err);
-    return res.status(500).json({
-      message: "ไม่สามารถโหลดรายการลูกค้าได้",
-      error: err?.message || String(err),
-    });
+    return res.status(500).json({ message: "ไม่สามารถโหลดรายการลูกค้าได้", error: err?.message || String(err) });
   }
 });
 
-/**
- * GET /api/customers/:id
- * คืนข้อมูลลูกค้าคนเดียว + ประวัติทั้งหมดที่มีในระบบ
- */
 router.get("/:id", async (req, res) => {
   try {
     const id = Number(req.params.id);
-    if (!Number.isFinite(id)) {
-      return res.status(400).json({ message: "invalid customer id" });
-    }
+    if (!Number.isFinite(id)) return res.status(400).json({ message: "invalid customer id" });
 
     const customer = await prisma.customer.findUnique({
       where: { id },
       include: {
         contracts: {
           orderBy: { createdAt: "desc" },
-          include: {
-            images: true,
-            cashbookEntries: true,
-            actionLogs: true,
-          },
+          include: { images: true, cashbookEntries: true, actionLogs: true },
         },
-        inventoryItemsBought: {
-          orderBy: { createdAt: "desc" },
-        },
+        inventoryItemsBought: { orderBy: { createdAt: "desc" } },
       },
     });
-
     if (!customer) return res.status(404).json({ message: "ไม่พบลูกค้า" });
 
-    // CONSIGNMENT history: match ตาม schema ของคุณ (sellerIdCard / sellerPhone / sellerName)
+    // CONSIGNMENT by seller fields
     const sellerIdCard = customer.idCard ? String(customer.idCard).trim() : "";
     const sellerPhone = customer.phone ? String(customer.phone).trim() : "";
     const sellerName = customer.name ? String(customer.name).trim() : "";
@@ -143,10 +110,6 @@ router.get("/:id", async (req, res) => {
         })
       : [];
 
-    // salesOrders: schema ของคุณยังไม่มี model นี้ -> ส่ง [] ไม่ให้หน้าแตก
-    const salesOrders = [];
-
-    // segments สำหรับ badge
     const segments = [];
     if (customer.inventoryItemsBought?.length > 0) segments.push("BUYER");
     if ((customer.contracts || []).some((c) => c.type === "DEPOSIT")) segments.push("DEPOSITOR");
@@ -168,14 +131,11 @@ router.get("/:id", async (req, res) => {
       depositContracts: customer.contracts || [],
       inventoryItemsBought: customer.inventoryItemsBought || [],
       consignments,
-      salesOrders,
+      salesOrders: [], // schema ตอนนี้ยังไม่มี
     });
   } catch (err) {
     console.error("GET /api/customers/:id error:", err);
-    return res.status(500).json({
-      message: "ไม่สามารถโหลดรายละเอียดลูกค้าได้",
-      error: err?.message || String(err),
-    });
+    return res.status(500).json({ message: "ไม่สามารถโหลดรายละเอียดลูกค้าได้", error: err?.message || String(err) });
   }
 });
 
