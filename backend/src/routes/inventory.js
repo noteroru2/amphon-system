@@ -426,6 +426,53 @@ router.post("/bulk-sell", async (req, res) => {
         const prevGross = Number(item.grossProfit ?? 0);
         const prevNet = Number(item.netProfit ?? 0);
 
+        // buyer: { name, phone, address, taxId, idCard? }  // แนะนำเพิ่ม idCard ได้ด้วย
+const buyer = req.body?.buyer || {};
+const buyerName = (buyer.name || "").toString().trim();
+const buyerPhone = (buyer.phone || "").toString().trim();
+const buyerIdCard = (buyer.idCard || "").toString().trim(); // optional
+
+let buyerCustomer = null;
+
+// หา customer แบบปลอดภัย: ถ้ามี idCard ใช้ idCard ก่อน ไม่งั้นใช้ phone
+if (buyerIdCard) {
+  buyerCustomer = await prisma.customer.upsert({
+    where: { idCard: buyerIdCard },
+    update: {
+      name: buyerName || undefined,
+      phone: buyerPhone || undefined,
+      address: buyer.address || undefined,
+    },
+    create: {
+      name: buyerName || "ลูกค้า",
+      idCard: buyerIdCard,
+      phone: buyerPhone || null,
+      address: buyer.address || null,
+    },
+  });
+} else if (buyerPhone) {
+  // phone ไม่ unique ใน schema → ใช้ findFirst แล้วค่อย update/create
+  buyerCustomer = await prisma.customer.findFirst({ where: { phone: buyerPhone } });
+  if (!buyerCustomer) {
+    buyerCustomer = await prisma.customer.create({
+      data: {
+        name: buyerName || "ลูกค้า",
+        phone: buyerPhone,
+        address: buyer.address || null,
+      },
+    });
+  } else if (buyerName || buyer.address) {
+    buyerCustomer = await prisma.customer.update({
+      where: { id: buyerCustomer.id },
+      data: {
+        name: buyerName || buyerCustomer.name,
+        address: buyer.address || buyerCustomer.address,
+      },
+    });
+  }
+}
+
+
         const updated = await tx.inventoryItem.update({
           where: { id: item.id },
           data: {
@@ -438,6 +485,7 @@ router.post("/bulk-sell", async (req, res) => {
             buyerPhone: buyer?.phone ?? null,
             buyerAddress: buyer?.address ?? null,
             buyerTaxId: buyer?.taxId ?? null,
+            buyerCustomerId: buyerCustomer ? buyerCustomer.id : null, // ✅ สำคัญที่สุด
 
             grossProfit: prevGross + profitThis,
             netProfit: prevNet + profitThis,

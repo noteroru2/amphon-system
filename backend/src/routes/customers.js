@@ -37,23 +37,19 @@ router.get("/", async (req, res) => {
     });
 
     // ===== CONSIGNOR sources (optional models / optional fields) =====
-    const consignmentByIdCard = new Map();
-    const consignmentByPhone = new Map();
+    // ===== CONSIGNOR index from ConsignmentContract (schema มีจริง) =====
+const consignmentByIdCard = new Map();
+const consignmentByPhone = new Map();
 
-    // 1) consignmentContract (ถ้ามีจริง)
-    try {
-      if (prisma.consignmentContract?.findMany) {
-        const consignments = await prisma.consignmentContract.findMany({
-          select: { sellerIdCard: true, sellerPhone: true },
-        });
-        for (const c of consignments) {
-          if (c?.sellerIdCard) consignmentByIdCard.set(String(c.sellerIdCard).trim(), true);
-          if (c?.sellerPhone) consignmentByPhone.set(String(c.sellerPhone).trim(), true);
-        }
-      }
-    } catch {
-      // ignore
-    }
+const consignments = await prisma.consignmentContract.findMany({
+  select: { sellerIdCard: true, sellerPhone: true },
+});
+
+for (const c of consignments) {
+  if (c.sellerIdCard) consignmentByIdCard.set(String(c.sellerIdCard).trim(), true);
+  if (c.sellerPhone) consignmentByPhone.set(String(c.sellerPhone).trim(), true);
+}
+
 
     // 2) inventoryItem.sellerCustomerId + sourceType (ถ้ามีจริง)
     const sellerCustomerIds = new Set(); // number set
@@ -93,10 +89,10 @@ router.get("/", async (req, res) => {
 
       const isConsignor =
         (idCardKey && consignmentByIdCard.has(idCardKey)) ||
-        (phoneKey && consignmentByPhone.has(phoneKey)) ||
-        (sellerCustomerIds.size > 0 && sellerCustomerIds.has(c.id));
+        (phoneKey && consignmentByPhone.has(phoneKey));
 
       if (isConsignor) segments.push("CONSIGNOR");
+
 
       return {
         id: c.id,
