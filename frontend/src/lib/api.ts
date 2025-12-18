@@ -69,3 +69,11 @@ export async function apiFetchWithConfig<T = any>(
   });
   return r.data;
 }
+export function getApiErrorMessage(err: any) {
+  return (
+    err?.response?.data?.message ||
+    err?.response?.data?.error ||
+    err?.message ||
+    "เกิดข้อผิดพลาด"
+  );
+}
