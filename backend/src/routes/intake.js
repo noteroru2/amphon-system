@@ -4,12 +4,10 @@ import multer from "multer";
 import { prisma } from "../db.js";
 
 const router = express.Router();
-
-// NOTE: บน Render filesystem เป็น ephemeral (หายเมื่อ redeploy)
-// ตอนนี้เก็บ path ไว้ก่อน ถ้าจะเก็บถาวรแนะนำ S3/R2 ภายหลัง
 const upload = multer({ dest: "uploads/" });
 
-/* ---------------- helpers ---------------- */
+const clean = (v) => (v ? String(v).trim() : "");
+
 const toNum = (v, fallback = 0) => {
   const n = Number(v);
   return Number.isFinite(n) ? n : fallback;
@@ -20,9 +18,6 @@ const toInt = (v, fallback = 1) => {
   return Number.isFinite(n) ? n : fallback;
 };
 
-// ✅ map sourceType ให้ตรง enum ใน DB จริง
-// ระบบคุณมี FORFEIT / PURCHASE / CONSIGNMENT (อย่างน้อย)
-// ดังนั้น BUY_IN ให้ map -> PURCHASE
 const normalizeSourceType = (raw) => {
   const s = String(raw || "").trim().toUpperCase();
   if (!s) return "PURCHASE";
@@ -43,70 +38,43 @@ router.post(
       const body = req.body || {};
       const files = req.files || {};
 
-      const {
-        sellerName,
-        sellerIdCard,
-        sellerPhone,
-        sellerAddress,
-        sellerLineId,
+      const sellerName = clean(body.sellerName);
+      const sellerIdCard = clean(body.sellerIdCard);
+      const sellerPhone = clean(body.sellerPhone);
+      const sellerAddress = clean(body.sellerAddress);
+      const sellerLineId = clean(body.sellerLineId);
 
-        brandModel,
-        serial,
-        condition,
-        accessories,
+      const brandModel = clean(body.brandModel);
+      const serial = clean(body.serial);
+      const condition = clean(body.condition);
+      const accessories = clean(body.accessories);
 
-        quantity,
-        unitPrice,
-        purchaseTotal,
-        targetPrice,
-        notes,
-
-        sourceType: rawSourceType,
-      } = body;
-
-      if (!brandModel || !String(brandModel).trim()) {
-        return res.status(400).json({
-          ok: false,
-          message: "ต้องระบุชื่อสินค้า / รุ่น (Brand/Model)",
-        });
-      }
-
-      // -------- parse numbers --------
-      const qtyValue = Math.max(1, toInt(quantity, 1));
-      const unitValue = Math.max(0, toNum(unitPrice, 0));
-
-      // ถ้าส่ง purchaseTotal มา ให้ใช้ก่อน ไม่งั้นคำนวณ qty*unit
-      const totalValueRaw = toNum(purchaseTotal, qtyValue * unitValue);
-      const totalValue = Math.max(0, totalValueRaw);
-
-      const targetValueRaw = toNum(targetPrice, 0);
+      const qtyValue = Math.max(1, toInt(body.quantity, 1));
+      const unitValue = Math.max(0, toNum(body.unitPrice, 0));
+      const totalValue = Math.max(0, toNum(body.purchaseTotal, qtyValue * unitValue));
+      const targetValueRaw = toNum(body.targetPrice, 0);
       const targetValue = targetValueRaw > 0 ? targetValueRaw : null;
 
-      const sourceType = normalizeSourceType(rawSourceType);
+      const sourceType = normalizeSourceType(body.sourceType);
 
-      // -------- evidence files (paths) --------
+      if (!brandModel) {
+        return res.status(400).json({ ok: false, message: "ต้องระบุชื่อสินค้า / รุ่น (Brand/Model)" });
+      }
+      if (!sellerName) {
+        return res.status(400).json({ ok: false, message: "ต้องระบุชื่อผู้ขาย" });
+      }
+      if (!sellerIdCard && !sellerPhone) {
+        return res.status(400).json({ ok: false, message: "ต้องมีเลขบัตร หรือ เบอร์โทร อย่างน้อย 1 อย่าง" });
+      }
+      if (unitValue <= 0) {
+        return res.status(400).json({ ok: false, message: "unitPrice ต้องมากกว่า 0" });
+      }
+
       const productPhotoPaths = (files.productPhotos || []).map((f) => f.path);
       const idCardPhotoPaths = (files.idCardPhotos || []).map((f) => f.path);
       const contractPhotoPaths = (files.contractPhotos || []).map((f) => f.path);
 
-      // meta (ตอนนี้ยังไม่เก็บลง DB แยก หากอยากเก็บจริงให้เพิ่ม column JSON)
-      const meta = {
-        seller: {
-          name: sellerName || "",
-          idCard: sellerIdCard || "",
-          phone: sellerPhone || "",
-          address: sellerAddress || "",
-          lineId: sellerLineId || "",
-        },
-        notes: notes || "",
-        evidenceFiles: {
-          productPhotos: productPhotoPaths,
-          idCardPhotos: idCardPhotoPaths,
-          contractPhotos: contractPhotoPaths,
-        },
-      };
-
-      // -------- generate stock code --------
+      // gen inventory code
       const lastItem = await prisma.inventoryItem.findFirst({
         orderBy: { id: "desc" },
         select: { id: true },
@@ -116,84 +84,104 @@ router.post(
       const year = new Date().getFullYear();
       const code = `INV-${year}-${String(nextNumber).padStart(4, "0")}`;
 
-      const createdItem = await prisma.$transaction(async (tx) => {
-        // 1) create inventory
+      const created = await prisma.$transaction(async (tx) => {
+        // ✅ 1) upsert/find seller customer
+        let sellerCustomer = null;
+
+        if (sellerIdCard) {
+          // idCard เป็น unique ใน schema ของคุณ
+          sellerCustomer = await tx.customer.upsert({
+            where: { idCard: sellerIdCard },
+            update: {
+              name: sellerName || undefined,
+              phone: sellerPhone || undefined,
+              address: sellerAddress || undefined,
+              lineId: sellerLineId || undefined,
+            },
+            create: {
+              name: sellerName || "ลูกค้า",
+              idCard: sellerIdCard,
+              phone: sellerPhone || null,
+              address: sellerAddress || null,
+              lineId: sellerLineId || null,
+            },
+          });
+        } else if (sellerPhone) {
+          // phone ไม่ unique → findFirst แล้วค่อย update/create
+          sellerCustomer = await tx.customer.findFirst({ where: { phone: sellerPhone } });
+          if (!sellerCustomer) {
+            sellerCustomer = await tx.customer.create({
+              data: {
+                name: sellerName || "ลูกค้า",
+                phone: sellerPhone,
+                address: sellerAddress || null,
+                lineId: sellerLineId || null,
+              },
+            });
+          } else {
+            sellerCustomer = await tx.customer.update({
+              where: { id: sellerCustomer.id },
+              data: {
+                name: sellerName || sellerCustomer.name,
+                address: sellerAddress || sellerCustomer.address,
+                lineId: sellerLineId || sellerCustomer.lineId,
+              },
+            });
+          }
+        }
+
+        // ✅ 2) create inventory
         const item = await tx.inventoryItem.create({
           data: {
             code,
-            name: String(brandModel).trim(),
-            serial: serial ? String(serial).trim() : null,
-            condition: condition ? String(condition).trim() : null,
-            accessories: accessories ? String(accessories).trim() : null,
+            name: brandModel,
+            serial: serial || null,
+            condition: condition || null,
+            accessories: accessories || null,
             storageLocation: null,
 
-            sourceType, // ✅ PURCHASE (หรือค่าที่รองรับ)
+            sourceType, // PURCHASE
             sourceContractId: null,
             sourceContractCode: null,
 
-            // ✅ cost = ต้นทุนต่อชิ้น (ตามหน้า NewIntakePage)
+            // ✅ ต้นทุนต่อชิ้น (ให้ตรง UI "ต้นทุน/ชิ้น")
             cost: unitValue,
-            appraisedPrice: targetValue,
+            // ✅ ราคาตั้งขายต่อชิ้น
             targetPrice: targetValue,
-            sellingPrice: null, // ✅ ไม่ใช้ 0
+            appraisedPrice: null,
+            sellingPrice: null,
 
             quantity: qtyValue,
             quantityAvailable: qtyValue,
             quantitySold: 0,
 
-            grossProfit: null,
-            netProfit: null,
-
             status: "IN_STOCK",
 
-            buyerName: null,
-            buyerPhone: null,
-            buyerAddress: null,
-            buyerTaxId: null,
-            buyerCustomerId: null,
+            // ✅ ผูกผู้ขาย (ต้องมี field ใน schema แล้ว)
+            sellerCustomerId: sellerCustomer ? sellerCustomer.id : null,
           },
         });
 
-        // 2) cashbook OUT
-        if (totalValue > 0) {
-          await tx.cashbookEntry.create({
-            data: {
-              type: "OUT",
-              category: "INVENTORY_BUY_IN",
-              amount: totalValue,
-              profit: 0,
-              description: `รับซื้อสินค้า x${qtyValue}: ${String(brandModel).trim()} จาก ${
-                sellerName ? String(sellerName).trim() : "ลูกค้าทั่วไป"
-              }`,
-              contractId: null,
-              inventoryItemId: item.id,
-            },
-          });
-        }
-
-        return item;
-      });
-
-      console.log("[INTAKE] created inventory:", createdItem.id, createdItem.code, {
-        sourceType,
-        qtyValue,
-        unitValue,
-        totalValue,
-        targetValue,
-        metaPreview: {
-          sellerName: meta.seller.name,
-          files: {
-            product: productPhotoPaths.length,
-            idcard: idCardPhotoPaths.length,
-            contract: contractPhotoPaths.length,
+        // ✅ 3) cashbook OUT = ต้นทุนรวมที่จ่ายจริง
+        await tx.cashbookEntry.create({
+          data: {
+            type: "OUT",
+            category: "INVENTORY_BUY_IN",
+            amount: totalValue,
+            profit: 0,
+            description: `รับซื้อเข้า ${brandModel} x${qtyValue} จาก ${sellerName}`,
+            inventoryItemId: item.id,
           },
-        },
+        });
+
+        return { item, sellerCustomer, evidence: { productPhotoPaths, idCardPhotoPaths, contractPhotoPaths } };
       });
 
       return res.json({
         ok: true,
-        itemId: createdItem.id,
-        itemCode: createdItem.code,
+        itemId: created.item.id,
+        itemCode: created.item.code,
+        sellerCustomerId: created.sellerCustomer?.id ?? null,
       });
     } catch (err) {
       console.error("POST /api/intake error:", err);

@@ -21,8 +21,12 @@ router.get("/", async (req, res) => {
           }
         : undefined,
       include: {
-        // ✅ ฝากดูแล: แค่รู้ว่ามี contract type=DEPOSIT หรือไม่
-        contracts: { select: { id: true, type: true }, take: 1 },
+        // ✅ ฝากดูแล: เอาเฉพาะ contract ที่เป็น DEPOSIT เท่านั้น (กันสุ่ม take 1 แล้วไม่เจอ)
+        contracts: {
+          where: { type: "DEPOSIT" },
+          select: { id: true },
+          take: 1,
+        },
 
         // ✅ มาซื้อ: inventory ที่ผูก buyerCustomerId
         inventoryItemsBought: { select: { id: true }, take: 1 },
@@ -30,15 +34,18 @@ router.get("/", async (req, res) => {
       orderBy: { createdAt: "desc" },
     });
 
-    // ✅ ฝากขาย: index จาก ConsignmentContract (match ด้วย idCard/phone)
+    // ✅ ฝากขาย: ใช้ sellerCustomerId (แม่นสุด) + fallback (idCard/phone)
+    const consignorCustomerIds = new Set();
     const consignmentByIdCard = new Set();
     const consignmentByPhone = new Set();
 
     const consignments = await prisma.consignmentContract.findMany({
-      select: { sellerIdCard: true, sellerPhone: true },
+      select: { sellerCustomerId: true, sellerIdCard: true, sellerPhone: true },
     });
 
     for (const c of consignments) {
+      if (typeof c.sellerCustomerId === "number") consignorCustomerIds.add(c.sellerCustomerId);
+
       const idc = clean(c.sellerIdCard);
       const ph = clean(c.sellerPhone);
       if (idc) consignmentByIdCard.add(idc);
@@ -51,15 +58,15 @@ router.get("/", async (req, res) => {
       // BUYER
       if ((c.inventoryItemsBought || []).length > 0) segments.push("BUYER");
 
-      // ✅ DEPOSITOR (schema มีแค่ DEPOSIT)
-      const isDepositor = (c.contracts || []).some((ct) => ct.type === "DEPOSIT");
-      if (isDepositor) segments.push("DEPOSITOR");
+      // DEPOSITOR
+      if ((c.contracts || []).length > 0) segments.push("DEPOSITOR");
 
-      // ✅ CONSIGNOR (ฝากขาย)
+      // CONSIGNOR (priority: sellerCustomerId)
       const idCardKey = clean(c.idCard);
       const phoneKey = clean(c.phone);
 
       const isConsignor =
+        consignorCustomerIds.has(c.id) ||
         (idCardKey && consignmentByIdCard.has(idCardKey)) ||
         (phoneKey && consignmentByPhone.has(phoneKey));
 
@@ -105,22 +112,21 @@ router.get("/:id", async (req, res) => {
 
     if (!customer) return res.status(404).json({ message: "ไม่พบลูกค้า" });
 
-    // ✅ ฝากขาย: หาเฉพาะด้วย idCard/phone (แม่นกว่า name)
+    // ✅ ฝากขาย: ใช้ sellerCustomerId ก่อน (แม่นสุด) + fallback ด้วย idCard/phone
     const sellerIdCard = clean(customer.idCard);
     const sellerPhone = clean(customer.phone);
 
     const OR = [
+      { sellerCustomerId: customer.id },
       sellerIdCard ? { sellerIdCard } : null,
       sellerPhone ? { sellerPhone } : null,
     ].filter(Boolean);
 
-    const consignments = OR.length
-      ? await prisma.consignmentContract.findMany({
-          where: { OR },
-          orderBy: { createdAt: "desc" },
-          include: { inventoryItem: true },
-        })
-      : [];
+    const consignments = await prisma.consignmentContract.findMany({
+      where: OR.length ? { OR } : undefined,
+      orderBy: { createdAt: "desc" },
+      include: { inventoryItem: true },
+    });
 
     const segments = [];
     if ((customer.inventoryItemsBought || []).length > 0) segments.push("BUYER");
@@ -143,7 +149,7 @@ router.get("/:id", async (req, res) => {
       depositContracts: customer.contracts || [],
       inventoryItemsBought: customer.inventoryItemsBought || [],
       consignments,
-      salesOrders: [], // ตอนนี้ยังไม่มี schema salesOrder ใน prisma ที่คุณส่งมา
+      salesOrders: [],
     });
   } catch (err) {
     console.error("GET /api/customers/:id error:", err);
