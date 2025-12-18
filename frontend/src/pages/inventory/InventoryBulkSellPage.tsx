@@ -208,15 +208,23 @@ const InventoryBulkSellPage: React.FC = () => {
 
       // ✅ สร้างรายการสำหรับพิมพ์ใบเสร็จตาม printHelpers.ts ของคุณ
       // printBulkSellReceipt(items: [{id,title,serial,price}], buyer)
-      const receiptItems: BulkReceiptItem[] = payloadItems.map((p) => {
-        const it = items.find((x) => x.id === p.id);
-        const title = `${it?.name || "-"} x${p.quantity}`;
-        const serial = it?.serial || undefined;
-        const price = p.sellingPrice * p.quantity; // ✅ amount ต่อรายการ
-        return { id: p.id, title, serial: serial || undefined, price };
-      });
+      const receiptItems = payloadItems.map((p) => {
+  const it = items.find((x) => x.id === p.id);
 
-      printBulkSellReceipt(receiptItems, buyer);
+  const unitPrice = Number(p.sellingPrice ?? 0);
+  const quantity = Math.max(1, Number(p.quantity ?? 1));
+
+  return {
+    id: p.id,
+    title: it?.name || "-",
+    serial: it?.serial || undefined,
+    unitPrice,   // ✅ สำคัญ
+    quantity,    // ✅ สำคัญ
+  };
+});
+
+printBulkSellReceipt(receiptItems, buyerInfo);
+
 
       alert("บันทึกการขายเรียบร้อย");
       navigate("/app/inventory");
