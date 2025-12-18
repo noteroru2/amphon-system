@@ -1,6 +1,8 @@
 import React, { useEffect, useMemo, useState } from "react";
-import { api, getApiErrorMessage } from "../../lib/api";
-import { Link, useParams } from "react-router-dom";
+import axios from "axios";
+import { useParams, Link } from "react-router-dom";
+
+
 
 type Segment = "BUYER" | "CONSIGNOR" | "DEPOSITOR";
 

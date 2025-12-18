@@ -3,68 +3,61 @@ import { prisma } from "../db.js";
 
 const router = express.Router();
 
-/**
- * segments:
- * - BUYER: ลูกค้าที่เคย "มาซื้อ" (มี inventoryItemsBought อย่างน้อย 1)
- * - DEPOSITOR: ลูกค้าที่เคย "ฝากดูแล" (มี Contract.type = DEPOSIT)
- * - CONSIGNOR: ลูกค้าที่เคย "ขาย/ฝากขาย" (จาก ConsignmentContract)
- */
+const clean = (v) => (v ? String(v).trim() : "");
+
 router.get("/", async (req, res) => {
   try {
-    const q = (req.query.q || "").toString().trim();
-
-    const where = q
-      ? {
-          OR: [
-            { name: { contains: q, mode: "insensitive" } },
-            { phone: { contains: q, mode: "insensitive" } },
-            { idCard: { contains: q, mode: "insensitive" } },
-            { lineId: { contains: q, mode: "insensitive" } },
-          ],
-        }
-      : undefined;
+    const q = clean(req.query.q);
 
     const customers = await prisma.customer.findMany({
-      where,
+      where: q
+        ? {
+            OR: [
+              { name: { contains: q, mode: "insensitive" } },
+              { phone: { contains: q, mode: "insensitive" } },
+              { idCard: { contains: q, mode: "insensitive" } },
+              { lineId: { contains: q, mode: "insensitive" } },
+            ],
+          }
+        : undefined,
       include: {
-        contracts: { select: { id: true, type: true } },
+        // ✅ ฝากดูแล: แค่รู้ว่ามี contract type=DEPOSIT หรือไม่
+        contracts: { select: { id: true, type: true }, take: 1 },
+
+        // ✅ มาซื้อ: inventory ที่ผูก buyerCustomerId
         inventoryItemsBought: { select: { id: true }, take: 1 },
       },
       orderBy: { createdAt: "desc" },
     });
 
-    // ===== CONSIGNOR index (ต้องกันกรณีตารางยังไม่มีจริง) =====
-    const consignmentByIdCard = new Map();
-    const consignmentByPhone = new Map();
+    // ✅ ฝากขาย: index จาก ConsignmentContract (match ด้วย idCard/phone)
+    const consignmentByIdCard = new Set();
+    const consignmentByPhone = new Set();
 
-    try {
-      const consignments = await prisma.consignmentContract.findMany({
-        select: { sellerIdCard: true, sellerPhone: true },
-      });
+    const consignments = await prisma.consignmentContract.findMany({
+      select: { sellerIdCard: true, sellerPhone: true },
+    });
 
-      for (const c of consignments) {
-        if (c?.sellerIdCard) consignmentByIdCard.set(String(c.sellerIdCard).trim(), true);
-        if (c?.sellerPhone) consignmentByPhone.set(String(c.sellerPhone).trim(), true);
-      }
-    } catch (e) {
-      // สำคัญ: ถ้ายังไม่ migrate ตาราง consignments หรือ DB มีปัญหา
-      // ให้ระบบยังตอบได้ (แค่ CONSIGNOR จะยังไม่ขึ้น)
-      console.warn("consignmentContract not available:", e?.message || e);
+    for (const c of consignments) {
+      const idc = clean(c.sellerIdCard);
+      const ph = clean(c.sellerPhone);
+      if (idc) consignmentByIdCard.add(idc);
+      if (ph) consignmentByPhone.add(ph);
     }
 
     const rows = customers.map((c) => {
       const segments = [];
 
-      // BUYER: มี inventoryItemsBought
-      if (c.inventoryItemsBought?.length > 0) segments.push("BUYER");
+      // BUYER
+      if ((c.inventoryItemsBought || []).length > 0) segments.push("BUYER");
 
-      // DEPOSITOR: Contract.type = DEPOSIT (ตาม schema ของคุณ)
+      // ✅ DEPOSITOR (schema มีแค่ DEPOSIT)
       const isDepositor = (c.contracts || []).some((ct) => ct.type === "DEPOSIT");
       if (isDepositor) segments.push("DEPOSITOR");
 
-      // CONSIGNOR: match จาก idCard/phone ใน ConsignmentContract
-      const idCardKey = c.idCard ? String(c.idCard).trim() : "";
-      const phoneKey = c.phone ? String(c.phone).trim() : "";
+      // ✅ CONSIGNOR (ฝากขาย)
+      const idCardKey = clean(c.idCard);
+      const phoneKey = clean(c.phone);
 
       const isConsignor =
         (idCardKey && consignmentByIdCard.has(idCardKey)) ||
@@ -112,32 +105,25 @@ router.get("/:id", async (req, res) => {
 
     if (!customer) return res.status(404).json({ message: "ไม่พบลูกค้า" });
 
-    // consignments (กันกรณีตารางยังไม่มี)
-    let consignments = [];
-    try {
-      const sellerIdCard = customer.idCard ? String(customer.idCard).trim() : "";
-      const sellerPhone = customer.phone ? String(customer.phone).trim() : "";
-      const sellerName = customer.name ? String(customer.name).trim() : "";
+    // ✅ ฝากขาย: หาเฉพาะด้วย idCard/phone (แม่นกว่า name)
+    const sellerIdCard = clean(customer.idCard);
+    const sellerPhone = clean(customer.phone);
 
-      const OR = [
-        sellerIdCard ? { sellerIdCard } : null,
-        sellerPhone ? { sellerPhone } : null,
-        sellerName ? { sellerName } : null,
-      ].filter(Boolean);
+    const OR = [
+      sellerIdCard ? { sellerIdCard } : null,
+      sellerPhone ? { sellerPhone } : null,
+    ].filter(Boolean);
 
-      consignments = await prisma.consignmentContract.findMany({
-        where: OR.length ? { OR } : undefined,
-        orderBy: { createdAt: "desc" },
-        include: { inventoryItem: true },
-      });
-    } catch (e) {
-      console.warn("consignmentContract not available:", e?.message || e);
-      consignments = [];
-    }
+    const consignments = OR.length
+      ? await prisma.consignmentContract.findMany({
+          where: { OR },
+          orderBy: { createdAt: "desc" },
+          include: { inventoryItem: true },
+        })
+      : [];
 
-    // segments
     const segments = [];
-    if (customer.inventoryItemsBought?.length > 0) segments.push("BUYER");
+    if ((customer.inventoryItemsBought || []).length > 0) segments.push("BUYER");
     if ((customer.contracts || []).some((c) => c.type === "DEPOSIT")) segments.push("DEPOSITOR");
     if ((consignments || []).length > 0) segments.push("CONSIGNOR");
 
@@ -157,7 +143,7 @@ router.get("/:id", async (req, res) => {
       depositContracts: customer.contracts || [],
       inventoryItemsBought: customer.inventoryItemsBought || [],
       consignments,
-      salesOrders: [],
+      salesOrders: [], // ตอนนี้ยังไม่มี schema salesOrder ใน prisma ที่คุณส่งมา
     });
   } catch (err) {
     console.error("GET /api/customers/:id error:", err);
