@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from "react";
-import axios from "axios";
+import { api, getApiErrorMessage } from "../../lib/api";
+import { Link, useParams } from "react-router-dom";
 
 type Segment = "BUYER" | "CONSIGNOR" | "DEPOSITOR";
 
@@ -17,7 +18,8 @@ type Customer = {
 };
 
 export default function CustomerDetailPage() {
-  const id = Number(window.location.pathname.split("/").pop());
+  const params = useParams();
+  const id = Number(params.id);
 
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
@@ -32,7 +34,10 @@ export default function CustomerDetailPage() {
     try {
       setErr("");
       setLoading(true);
-      const res = await axios.get(`/api/customers/${id}`);
+
+      // ✅ ยิงผ่าน api instance เท่านั้น
+      const res = await api.get(`/api/customers/${id}`);
+
       setCustomer(res.data.customer);
       setDepositContracts(res.data.depositContracts || []);
       setInventoryItemsBought(res.data.inventoryItemsBought || []);
@@ -40,7 +45,7 @@ export default function CustomerDetailPage() {
       setSalesOrders(res.data.salesOrders || []);
     } catch (e: any) {
       console.error(e);
-      setErr(e?.response?.data?.message || e?.message || "โหลดรายละเอียดลูกค้าไม่สำเร็จ");
+      setErr(getApiErrorMessage(e) || "โหลดรายละเอียดลูกค้าไม่สำเร็จ");
     } finally {
       setLoading(false);
     }
@@ -50,7 +55,7 @@ export default function CustomerDetailPage() {
     if (Number.isFinite(id)) fetchData();
     else setErr("customer id ไม่ถูกต้อง");
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [id]);
 
   const badges = useMemo(() => {
     const s = customer?.segments || [];
@@ -73,9 +78,9 @@ export default function CustomerDetailPage() {
     return (
       <div className="min-h-screen bg-slate-100">
         <div className="mx-auto max-w-6xl px-6 py-6">
-          <a href="/customers" className="text-sm text-slate-600 underline">
+          <Link to="/app/customers" className="text-sm text-slate-600 underline">
             ← กลับหน้าลูกค้า
-          </a>
+          </Link>
           <div className="mt-4 rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
             {err}
           </div>
@@ -91,31 +96,42 @@ export default function CustomerDetailPage() {
       <div className="mx-auto max-w-6xl px-6 py-6">
         <div className="mb-4 flex items-center justify-between">
           <div>
-            <a href="/customers" className="text-sm text-slate-600 underline">
+            <Link to="/app/customers" className="text-sm text-slate-600 underline">
               ← กลับหน้าลูกค้า
-            </a>
+            </Link>
             <h1 className="mt-2 text-xl font-semibold">{customer.name}</h1>
 
             <div className="mt-2 flex flex-wrap gap-2">
               {badges.buyer ? (
-                <span className="rounded bg-emerald-50 px-2 py-1 text-xs text-emerald-700">มาซื้อ</span>
+                <span className="rounded bg-emerald-50 px-2 py-1 text-xs text-emerald-700">
+                  มาซื้อ
+                </span>
               ) : null}
               {badges.consignor ? (
-                <span className="rounded bg-amber-50 px-2 py-1 text-xs text-amber-700">ขาย/ฝากขาย</span>
+                <span className="rounded bg-amber-50 px-2 py-1 text-xs text-amber-700">
+                  ขาย/ฝากขาย
+                </span>
               ) : null}
               {badges.depositor ? (
-                <span className="rounded bg-sky-50 px-2 py-1 text-xs text-sky-700">ฝากดูแล</span>
+                <span className="rounded bg-sky-50 px-2 py-1 text-xs text-sky-700">
+                  ฝากดูแล
+                </span>
               ) : null}
               {!customer.segments?.length ? (
-                <span className="rounded bg-slate-100 px-2 py-1 text-xs text-slate-600">ยังไม่จัดกลุ่ม</span>
+                <span className="rounded bg-slate-100 px-2 py-1 text-xs text-slate-600">
+                  ยังไม่จัดกลุ่ม
+                </span>
               ) : null}
             </div>
           </div>
 
           <div className="flex gap-2">
-            <a href={`/customers`} className="rounded bg-white px-3 py-2 text-sm shadow hover:bg-slate-50">
+            <Link
+              to="/app/customers"
+              className="rounded bg-white px-3 py-2 text-sm shadow hover:bg-slate-50"
+            >
               รายการลูกค้า
-            </a>
+            </Link>
           </div>
         </div>
 
@@ -202,7 +218,9 @@ export default function CustomerDetailPage() {
 
         {/* มาซื้อ */}
         <div className="mt-4 rounded bg-white shadow">
-          <div className="border-b px-4 py-3 font-semibold">ประวัติมาซื้อ (Inventory Items Bought)</div>
+          <div className="border-b px-4 py-3 font-semibold">
+            ประวัติมาซื้อ (Inventory Items Bought)
+          </div>
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
               <thead className="bg-slate-50 text-left">
@@ -252,10 +270,16 @@ export default function CustomerDetailPage() {
                 {consignments.map((cs: any) => (
                   <tr key={cs.id} className="border-t">
                     <td className="px-4 py-3">{cs.code || cs.id}</td>
-                    <td className="px-4 py-3">{cs.itemName || cs.inventoryItem?.name || "-"}</td>
+                    <td className="px-4 py-3">
+                      {cs.itemName || cs.inventoryItem?.name || "-"}
+                    </td>
                     <td className="px-4 py-3">{cs.status || "-"}</td>
-                    <td className="px-4 py-3">{cs.quantity ?? cs.inventoryItem?.quantity ?? "-"}</td>
-                    <td className="px-4 py-3">{cs.targetPrice ?? cs.inventoryItem?.targetPrice ?? "-"}</td>
+                    <td className="px-4 py-3">
+                      {cs.quantity ?? cs.inventoryItem?.quantity ?? "-"}
+                    </td>
+                    <td className="px-4 py-3">
+                      {cs.targetPrice ?? cs.inventoryItem?.targetPrice ?? "-"}
+                    </td>
                   </tr>
                 ))}
                 {consignments.length === 0 ? (
@@ -272,9 +296,13 @@ export default function CustomerDetailPage() {
 
         {/* Sales orders (ถ้ามี) */}
         <div className="mt-4 rounded bg-white shadow">
-          <div className="border-b px-4 py-3 font-semibold">ประวัติการขาย (Sales Orders)</div>
+          <div className="border-b px-4 py-3 font-semibold">
+            ประวัติการขาย (Sales Orders)
+          </div>
           <div className="px-4 py-4 text-sm text-slate-600">
-            {salesOrders.length === 0 ? "ไม่มีข้อมูล (หรือระบบยังไม่มี salesOrder model)" : "มีรายการขาย"}
+            {salesOrders.length === 0
+              ? "ไม่มีข้อมูล (หรือระบบยังไม่มี salesOrder model)"
+              : "มีรายการขาย"}
           </div>
         </div>
       </div>

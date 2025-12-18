@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
-import axios from "axios";
+import { api, getApiErrorMessage } from "../../lib/api";
 import { arrayFromApi } from "../../lib/arrayFromApi";
 import { Link } from "react-router-dom";
 
@@ -47,16 +47,16 @@ export default function CustomersPage() {
       setErr("");
       setLoading(true);
 
-      const res = await axios.get("/api/customers", {
+      // ✅ ยิงผ่าน api instance เท่านั้น
+      const res = await api.get("/api/customers", {
         params: query ? { q: query } : undefined,
       });
 
-      // ✅ normalize response ให้เป็น array เสมอ
       const list = arrayFromApi<any>(res.data).map(normalizeCustomerRow);
       setRows(list);
     } catch (e: any) {
       console.error(e);
-      setErr(e?.response?.data?.message || e?.message || "โหลดข้อมูลลูกค้าไม่สำเร็จ");
+      setErr(getApiErrorMessage(e) || "โหลดข้อมูลลูกค้าไม่สำเร็จ");
       setRows([]);
     } finally {
       setLoading(false);
@@ -65,6 +65,7 @@ export default function CustomersPage() {
 
   useEffect(() => {
     fetchData("");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const safeRows = useMemo(() => (Array.isArray(rows) ? rows : []), [rows]);
@@ -101,42 +102,57 @@ export default function CustomersPage() {
             placeholder="ค้นหา: ชื่อ / โทร / เลขบัตร / LINE"
             className="w-full rounded border px-3 py-2"
           />
-          <button className="rounded bg-slate-900 px-4 py-2 text-white">ค้นหา</button>
+          <button
+            className="rounded bg-slate-900 px-4 py-2 text-white"
+            disabled={loading}
+          >
+            {loading ? "กำลังค้นหา..." : "ค้นหา"}
+          </button>
         </form>
 
         <div className="mb-4 flex flex-wrap gap-2">
           <button
             type="button"
             onClick={() => setTab("ALL")}
-            className={`rounded px-3 py-2 text-sm shadow ${tab === "ALL" ? "bg-slate-900 text-white" : "bg-white"}`}
+            className={`rounded px-3 py-2 text-sm shadow ${
+              tab === "ALL" ? "bg-slate-900 text-white" : "bg-white"
+            }`}
           >
             ทั้งหมด ({counts.all})
           </button>
           <button
             type="button"
             onClick={() => setTab("BUYER")}
-            className={`rounded px-3 py-2 text-sm shadow ${tab === "BUYER" ? "bg-slate-900 text-white" : "bg-white"}`}
+            className={`rounded px-3 py-2 text-sm shadow ${
+              tab === "BUYER" ? "bg-slate-900 text-white" : "bg-white"
+            }`}
           >
             ลูกค้ามาซื้อ ({counts.buyer})
           </button>
           <button
             type="button"
             onClick={() => setTab("CONSIGNOR")}
-            className={`rounded px-3 py-2 text-sm shadow ${tab === "CONSIGNOR" ? "bg-slate-900 text-white" : "bg-white"}`}
+            className={`rounded px-3 py-2 text-sm shadow ${
+              tab === "CONSIGNOR" ? "bg-slate-900 text-white" : "bg-white"
+            }`}
           >
             ลูกค้ามาขาย/ฝากขาย ({counts.consignor})
           </button>
           <button
             type="button"
             onClick={() => setTab("DEPOSITOR")}
-            className={`rounded px-3 py-2 text-sm shadow ${tab === "DEPOSITOR" ? "bg-slate-900 text-white" : "bg-white"}`}
+            className={`rounded px-3 py-2 text-sm shadow ${
+              tab === "DEPOSITOR" ? "bg-slate-900 text-white" : "bg-white"
+            }`}
           >
             ลูกค้ามาฝากดูแล ({counts.depositor})
           </button>
         </div>
 
         {err ? (
-          <div className="mb-4 rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{err}</div>
+          <div className="mb-4 rounded border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            {err}
+          </div>
         ) : null}
 
         <div className="rounded bg-white shadow">
@@ -164,16 +180,24 @@ export default function CustomersPage() {
                     <td className="px-4 py-3">
                       <div className="flex flex-wrap gap-2">
                         {r.segments.includes("BUYER") ? (
-                          <span className="rounded bg-emerald-50 px-2 py-1 text-xs text-emerald-700">มาซื้อ</span>
+                          <span className="rounded bg-emerald-50 px-2 py-1 text-xs text-emerald-700">
+                            มาซื้อ
+                          </span>
                         ) : null}
                         {r.segments.includes("CONSIGNOR") ? (
-                          <span className="rounded bg-amber-50 px-2 py-1 text-xs text-amber-700">ขาย/ฝากขาย</span>
+                          <span className="rounded bg-amber-50 px-2 py-1 text-xs text-amber-700">
+                            ขาย/ฝากขาย
+                          </span>
                         ) : null}
                         {r.segments.includes("DEPOSITOR") ? (
-                          <span className="rounded bg-sky-50 px-2 py-1 text-xs text-sky-700">ฝากดูแล</span>
+                          <span className="rounded bg-sky-50 px-2 py-1 text-xs text-sky-700">
+                            ฝากดูแล
+                          </span>
                         ) : null}
                         {r.segments.length === 0 ? (
-                          <span className="rounded bg-slate-100 px-2 py-1 text-xs text-slate-600">ยังไม่จัดกลุ่ม</span>
+                          <span className="rounded bg-slate-100 px-2 py-1 text-xs text-slate-600">
+                            ยังไม่จัดกลุ่ม
+                          </span>
                         ) : null}
                       </div>
                     </td>
