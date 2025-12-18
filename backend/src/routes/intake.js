@@ -5,9 +5,31 @@ import { prisma } from "../db.js";
 
 const router = express.Router();
 
-// อัปโหลดไว้ชั่วคราว (Render เป็น ephemeral storage)
-// ถ้าจะใช้งานจริง แนะนำย้ายไป S3/R2 ภายหลัง
+// NOTE: บน Render filesystem เป็น ephemeral (หายเมื่อ redeploy)
+// ตอนนี้เก็บ path ไว้ก่อน ถ้าจะเก็บถาวรแนะนำ S3/R2 ภายหลัง
 const upload = multer({ dest: "uploads/" });
+
+/* ---------------- helpers ---------------- */
+const toNum = (v, fallback = 0) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : fallback;
+};
+
+const toInt = (v, fallback = 1) => {
+  const n = Math.floor(Number(v));
+  return Number.isFinite(n) ? n : fallback;
+};
+
+// ✅ map sourceType ให้ตรง enum ใน DB จริง
+// ระบบคุณมี FORFEIT / PURCHASE / CONSIGNMENT (อย่างน้อย)
+// ดังนั้น BUY_IN ให้ map -> PURCHASE
+const normalizeSourceType = (raw) => {
+  const s = String(raw || "").trim().toUpperCase();
+  if (!s) return "PURCHASE";
+  if (s === "BUY_IN" || s === "BUYIN" || s === "BUY-IN") return "PURCHASE";
+  if (s === "PURCHASE" || s === "FORFEIT" || s === "CONSIGNMENT") return s;
+  return "PURCHASE";
+};
 
 router.post(
   "/",
@@ -39,7 +61,7 @@ router.post(
         targetPrice,
         notes,
 
-        sourceType, // "BUY_IN" from frontend
+        sourceType: rawSourceType,
       } = body;
 
       if (!brandModel || !String(brandModel).trim()) {
@@ -49,59 +71,78 @@ router.post(
         });
       }
 
-      const qtyValue = Number(quantity);
-      const qty = Number.isFinite(qtyValue) && qtyValue > 0 ? qtyValue : 1;
+      // -------- parse numbers --------
+      const qtyValue = Math.max(1, toInt(quantity, 1));
+      const unitValue = Math.max(0, toNum(unitPrice, 0));
 
-      const unit = Number(unitPrice);
-      const unitCost = Number.isFinite(unit) && unit > 0 ? unit : 0;
+      // ถ้าส่ง purchaseTotal มา ให้ใช้ก่อน ไม่งั้นคำนวณ qty*unit
+      const totalValueRaw = toNum(purchaseTotal, qtyValue * unitValue);
+      const totalValue = Math.max(0, totalValueRaw);
 
-      const totalV = Number(purchaseTotal);
-      const totalCost =
-        Number.isFinite(totalV) && totalV > 0 ? totalV : qty * unitCost;
+      const targetValueRaw = toNum(targetPrice, 0);
+      const targetValue = targetValueRaw > 0 ? targetValueRaw : null;
 
-      const tp = Number(targetPrice);
-      const targetValue = Number.isFinite(tp) && tp > 0 ? tp : null;
+      const sourceType = normalizeSourceType(rawSourceType);
 
-      const st = String(sourceType || "BUY_IN").toUpperCase();
-
-      // สร้างรหัส INV-0001, INV-0002 ... ตาม id ล่าสุด
-      const lastItem = await prisma.inventoryItem.findFirst({
-        orderBy: { id: "desc" },
-        select: { id: true },
-      });
-      const nextNumber = (lastItem?.id || 0) + 1;
-      const code = `INV-${String(nextNumber).padStart(4, "0")}`;
-
-      // paths ของไฟล์ (ตอนนี้ยังไม่เก็บลง DB ถ้าไม่มี column)
+      // -------- evidence files (paths) --------
       const productPhotoPaths = (files.productPhotos || []).map((f) => f.path);
       const idCardPhotoPaths = (files.idCardPhotos || []).map((f) => f.path);
       const contractPhotoPaths = (files.contractPhotos || []).map((f) => f.path);
 
-      const created = await prisma.$transaction(async (tx) => {
-        // 1) สร้างสินค้าเข้าคลัง
+      // meta (ตอนนี้ยังไม่เก็บลง DB แยก หากอยากเก็บจริงให้เพิ่ม column JSON)
+      const meta = {
+        seller: {
+          name: sellerName || "",
+          idCard: sellerIdCard || "",
+          phone: sellerPhone || "",
+          address: sellerAddress || "",
+          lineId: sellerLineId || "",
+        },
+        notes: notes || "",
+        evidenceFiles: {
+          productPhotos: productPhotoPaths,
+          idCardPhotos: idCardPhotoPaths,
+          contractPhotos: contractPhotoPaths,
+        },
+      };
+
+      // -------- generate stock code --------
+      const lastItem = await prisma.inventoryItem.findFirst({
+        orderBy: { id: "desc" },
+        select: { id: true },
+      });
+
+      const nextNumber = (lastItem?.id || 0) + 1;
+      const year = new Date().getFullYear();
+      const code = `INV-${year}-${String(nextNumber).padStart(4, "0")}`;
+
+      const createdItem = await prisma.$transaction(async (tx) => {
+        // 1) create inventory
         const item = await tx.inventoryItem.create({
           data: {
             code,
             name: String(brandModel).trim(),
-            serial: serial ? String(serial) : null,
-            condition: condition ? String(condition) : null,
-            accessories: accessories ? String(accessories) : null,
+            serial: serial ? String(serial).trim() : null,
+            condition: condition ? String(condition).trim() : null,
+            accessories: accessories ? String(accessories).trim() : null,
             storageLocation: null,
 
-            // ✅ ให้ตรง enum ที่ระบบคุณใช้
-            sourceType: st === "PURCHASE" ? "BUY_IN" : st, // กันเคสส่งผิด
+            sourceType, // ✅ PURCHASE (หรือค่าที่รองรับ)
             sourceContractId: null,
             sourceContractCode: null,
 
-            // ✅ เก็บต้นทุน "รวม" (ขายทีหลังจะเฉลี่ยต่อชิ้นเองใน route sell)
-            cost: totalCost,
-
+            // ✅ cost = ต้นทุนต่อชิ้น (ตามหน้า NewIntakePage)
+            cost: unitValue,
+            appraisedPrice: targetValue,
             targetPrice: targetValue,
-            sellingPrice: 0,
+            sellingPrice: null, // ✅ ไม่ใช้ 0
 
-            quantity: qty,
-            quantityAvailable: qty,
+            quantity: qtyValue,
+            quantityAvailable: qtyValue,
             quantitySold: 0,
+
+            grossProfit: null,
+            netProfit: null,
 
             status: "IN_STOCK",
 
@@ -109,21 +150,23 @@ router.post(
             buyerPhone: null,
             buyerAddress: null,
             buyerTaxId: null,
+            buyerCustomerId: null,
           },
         });
 
-        // 2) ลง cashbook เป็นรายจ่ายรับซื้อ
-        if (totalCost > 0) {
+        // 2) cashbook OUT
+        if (totalValue > 0) {
           await tx.cashbookEntry.create({
             data: {
               type: "OUT",
               category: "INVENTORY_BUY_IN",
-              amount: totalCost,
+              amount: totalValue,
               profit: 0,
-              inventoryItemId: item.id,
-              description: `รับซื้อสินค้า (Buy In) x${qty}: ${String(brandModel).trim()} จาก ${
-                sellerName ? String(sellerName) : "ลูกค้าทั่วไป"
+              description: `รับซื้อสินค้า x${qtyValue}: ${String(brandModel).trim()} จาก ${
+                sellerName ? String(sellerName).trim() : "ลูกค้าทั่วไป"
               }`,
+              contractId: null,
+              inventoryItemId: item.id,
             },
           });
         }
@@ -131,15 +174,26 @@ router.post(
         return item;
       });
 
+      console.log("[INTAKE] created inventory:", createdItem.id, createdItem.code, {
+        sourceType,
+        qtyValue,
+        unitValue,
+        totalValue,
+        targetValue,
+        metaPreview: {
+          sellerName: meta.seller.name,
+          files: {
+            product: productPhotoPaths.length,
+            idcard: idCardPhotoPaths.length,
+            contract: contractPhotoPaths.length,
+          },
+        },
+      });
+
       return res.json({
         ok: true,
-        itemId: created.id,
-        itemCode: created.code,
-        evidence: {
-          productPhotos: productPhotoPaths,
-          idCardPhotos: idCardPhotoPaths,
-          contractPhotos: contractPhotoPaths,
-        },
+        itemId: createdItem.id,
+        itemCode: createdItem.code,
       });
     } catch (err) {
       console.error("POST /api/intake error:", err);

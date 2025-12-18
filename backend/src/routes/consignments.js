@@ -1,13 +1,21 @@
+// backend/src/routes/consignments.js
 import express from "express";
 import { prisma } from "../db.js";
 
 const router = express.Router();
 
-const toNumber = (v) => {
-  if (v == null) return 0;
-  if (typeof v === "object" && typeof v.toNumber === "function") return v.toNumber(); // Decimal
+/* ---------------- helpers ---------------- */
+const toNumber = (v, fallback = 0) => {
+  if (v == null) return fallback;
+  // Prisma Decimal
+  if (typeof v === "object" && typeof v.toNumber === "function") return v.toNumber();
   const n = Number(v);
-  return Number.isFinite(n) ? n : 0;
+  return Number.isFinite(n) ? n : fallback;
+};
+
+const toInt = (v, fallback = 1) => {
+  const n = Math.floor(toNumber(v, fallback));
+  return Number.isFinite(n) ? n : fallback;
 };
 
 const asArray = (v) => {
@@ -16,10 +24,10 @@ const asArray = (v) => {
   return [v].filter(Boolean);
 };
 
-// กัน enum พัง (ปรับให้ตรง enum จริงของคุณได้)
+// ✅ ให้ตรง enum จริงที่เจอบ่อยในโปรเจกต์คุณ
 const INVENTORY_STATUS = {
   IN_STOCK: "IN_STOCK",
-  SOLD: "SOLD", // ถ้า enum คุณไม่มี SOLD ให้เปลี่ยนเป็น SOLD_OUT / OUT_OF_STOCK ตามจริง
+  SOLD_OUT: "SOLD_OUT",
 };
 
 const CONSIGNMENT_STATUS = {
@@ -27,15 +35,31 @@ const CONSIGNMENT_STATUS = {
   SOLD: "SOLD",
 };
 
-const genCode = async () => {
+// ✅ gen consignment code ต่อปี
+const genConsignmentCode = async () => {
   const y = new Date().getFullYear();
   const count = await prisma.consignmentContract.count({
-    where: { createdAt: { gte: new Date(`${y}-01-01`), lt: new Date(`${y + 1}-01-01`) } },
+    where: {
+      createdAt: { gte: new Date(`${y}-01-01`), lt: new Date(`${y + 1}-01-01`) },
+    },
   });
   return `CONS-${y}-${String(count + 1).padStart(5, "0")}`;
 };
 
-// 1) create consignment + inventory + cashbook OUT
+// ✅ gen inventory code แบบเดียวกับ intake/forfeit: INV-YYYY-0001
+const genInventoryCode = async () => {
+  const last = await prisma.inventoryItem.findFirst({
+    orderBy: { id: "desc" },
+    select: { id: true },
+  });
+  const next = (last?.id || 0) + 1;
+  const y = new Date().getFullYear();
+  return `INV-${y}-${String(next).padStart(4, "0")}`;
+};
+
+/* ---------------- routes ---------------- */
+
+// 1) create consignment + inventory + cashbook OUT (advance)
 router.post("/", async (req, res) => {
   try {
     const {
@@ -58,33 +82,35 @@ router.post("/", async (req, res) => {
       storageLocation,
     } = req.body || {};
 
-    if (!sellerName) return res.status(400).json({ message: "กรุณากรอกชื่อผู้ฝากขาย" });
-    if (!itemName) return res.status(400).json({ message: "กรุณากรอกชื่อสินค้า" });
+    if (!sellerName?.trim()) return res.status(400).json({ ok: false, message: "กรุณากรอกชื่อผู้ฝากขาย" });
+    if (!itemName?.trim()) return res.status(400).json({ ok: false, message: "กรุณากรอกชื่อสินค้า" });
 
-    const adv = toNumber(advanceAmount);
-    const net = toNumber(netToSeller);
-    const tgt = toNumber(targetPrice);
-    const qty = Math.max(1, Math.floor(toNumber(quantity)));
+    const adv = Math.max(0, toNumber(advanceAmount, 0));
+    const net = Math.max(0, toNumber(netToSeller, 0));
+    const tgt = Math.max(0, toNumber(targetPrice, 0));
+    const qty = Math.max(1, toInt(quantity, 1));
 
-    if (adv < 0 || net < 0 || tgt < 0) return res.status(400).json({ message: "จำนวนเงินไม่ถูกต้อง" });
-
-    const code = await genCode();
+    // NOTE: photos เก็บเป็น array ได้ (ถ้า schema เป็น Json หรือ String[])
     const photosArr = asArray(photos);
+
+    const contractCode = await genConsignmentCode();
+    const inventoryCode = await genInventoryCode();
 
     const created = await prisma.$transaction(async (tx) => {
       // 1) create inventory item
       const inv = await tx.inventoryItem.create({
         data: {
-          code: `CON-${Date.now()}`,
-          name: itemName,
-          serial: serial || null,
-          condition: condition || null,
-          accessories: accessories || null,
-          storageLocation: storageLocation || null,
+          code: inventoryCode,
+          name: itemName.trim(),
+          serial: serial?.trim() || null,
+          condition: condition?.trim() || null,
+          accessories: accessories?.trim() || null,
+          storageLocation: storageLocation?.trim() || null,
 
           sourceType: "CONSIGNMENT",
-          cost: adv, // เงินจ่ายจริงตอนรับฝาก
-          targetPrice: tgt || null,
+          cost: adv, // เงินที่ร้านจ่ายจริงตอนรับฝากขาย (ถ้ามี)
+          targetPrice: tgt > 0 ? tgt : null,
+          sellingPrice: null,
 
           quantity: qty,
           quantityAvailable: qty,
@@ -97,21 +123,22 @@ router.post("/", async (req, res) => {
       // 2) create consignment contract
       const con = await tx.consignmentContract.create({
         data: {
-          code,
-          sellerName,
-          sellerIdCard: sellerIdCard || null,
-          sellerPhone: sellerPhone || null,
-          sellerAddress: sellerAddress || null,
+          code: contractCode,
 
-          itemName,
-          serial: serial || null,
-          condition: condition || null,
-          accessories: accessories || null,
+          sellerName: sellerName.trim(),
+          sellerIdCard: sellerIdCard?.trim() || null,
+          sellerPhone: sellerPhone?.trim() || null,
+          sellerAddress: sellerAddress?.trim() || null,
+
+          itemName: itemName.trim(),
+          serial: serial?.trim() || null,
+          condition: condition?.trim() || null,
+          accessories: accessories?.trim() || null,
           photos: photosArr.length ? photosArr : null,
 
           advanceAmount: adv,
           netToSeller: net,
-          targetPrice: tgt || null,
+          targetPrice: tgt > 0 ? tgt : null,
 
           status: CONSIGNMENT_STATUS.ACTIVE,
           inventoryItemId: inv.id,
@@ -119,7 +146,7 @@ router.post("/", async (req, res) => {
         include: { inventoryItem: true },
       });
 
-      // 3) cashbook OUT (จ่ายเงินให้ลูกค้า)
+      // 3) cashbook OUT (จ่ายเงินให้ผู้ฝากขาย)
       if (adv > 0) {
         await tx.cashbookEntry.create({
           data: {
@@ -127,7 +154,7 @@ router.post("/", async (req, res) => {
             category: "CONSIGNMENT_ADVANCE_OUT",
             amount: adv,
             profit: 0,
-            description: `จ่ายเงินรับฝากขาย (${code}) ให้ ${sellerName}`,
+            description: `จ่ายเงินรับฝากขาย (${contractCode}) ให้ ${sellerName.trim()}`,
             inventoryItemId: inv.id,
           },
         });
@@ -136,14 +163,18 @@ router.post("/", async (req, res) => {
       return { inv, con };
     });
 
-    res.json(created); // { inv, con }
+    return res.json({ ok: true, ...created });
   } catch (err) {
     console.error("POST /api/consignments error:", err);
-    res.status(500).json({ message: "สร้างสัญญาฝากขายไม่สำเร็จ", error: String(err?.message || err) });
+    return res.status(500).json({
+      ok: false,
+      message: "สร้างสัญญาฝากขายไม่สำเร็จ",
+      error: String(err?.message || err),
+    });
   }
 });
 
-// 2) list (default: onlyOpen=1 => show ACTIVE only)
+// 2) list (default onlyOpen=1 => ACTIVE only)
 router.get("/", async (req, res) => {
   try {
     const onlyOpen = String(req.query.onlyOpen ?? "1") === "1";
@@ -154,28 +185,31 @@ router.get("/", async (req, res) => {
       include: { inventoryItem: true },
     });
 
-    res.json(list);
+    return res.json(list);
   } catch (err) {
     console.error("GET /api/consignments error:", err);
-    res.status(500).json({ message: "ดึงรายการฝากขายไม่สำเร็จ", error: String(err?.message || err) });
+    return res.status(500).json({
+      ok: false,
+      message: "ดึงรายการฝากขายไม่สำเร็จ",
+      error: String(err?.message || err),
+    });
   }
 });
 
-// 2.1) detail for print/detail page
+// 2.1) detail
 router.get("/:id", async (req, res) => {
   try {
     const id = Number(req.params.id);
-    if (!Number.isFinite(id)) return res.status(400).json({ message: "id ไม่ถูกต้อง" });
+    if (!Number.isFinite(id)) return res.status(400).json({ ok: false, message: "id ไม่ถูกต้อง" });
 
     const con = await prisma.consignmentContract.findUnique({
       where: { id },
       include: { inventoryItem: true },
     });
 
-    if (!con) return res.status(404).json({ message: "ไม่พบสัญญาฝากขาย" });
+    if (!con) return res.status(404).json({ ok: false, message: "ไม่พบสัญญาฝากขาย" });
 
-    // normalize ให้ frontend เรียกง่าย
-    res.json({
+    return res.json({
       consignment: con,
       customer: {
         name: con.sellerName,
@@ -187,54 +221,67 @@ router.get("/:id", async (req, res) => {
     });
   } catch (err) {
     console.error("GET /api/consignments/:id error:", err);
-    res.status(500).json({ message: "ดึงรายละเอียดไม่สำเร็จ", error: String(err?.message || err) });
+    return res.status(500).json({
+      ok: false,
+      message: "ดึงรายละเอียดไม่สำเร็จ",
+      error: String(err?.message || err),
+    });
   }
 });
 
-// 3) sell consignment (คิดส่วนต่าง + VAT เฉพาะค่าบริการ)
+// 3) sell consignment
 router.post("/:id/sell", async (req, res) => {
   try {
     const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ ok: false, message: "id ไม่ถูกต้อง" });
+
     const { salePrice, quantity = 1, buyerName, buyerPhone, buyerAddress, buyerTaxId } = req.body || {};
 
-    const price = toNumber(salePrice);
-    const qty = Math.max(1, Math.floor(toNumber(quantity)));
-    if (price <= 0) return res.status(400).json({ message: "กรุณาระบุราคาขาย" });
+    const price = Math.max(0, toNumber(salePrice, 0));
+    const qty = Math.max(1, toInt(quantity, 1));
+    if (price <= 0) return res.status(400).json({ ok: false, message: "กรุณาระบุราคาขาย" });
 
     const result = await prisma.$transaction(async (tx) => {
       const con = await tx.consignmentContract.findUnique({
         where: { id },
         include: { inventoryItem: true },
       });
-      if (!con) throw new Error("NOT_FOUND");
-      if (!con.inventoryItem) throw new Error("NO_INVENTORY");
+
+      if (!con) {
+        const e = new Error("NOT_FOUND");
+        throw e;
+      }
+      if (!con.inventoryItem) {
+        const e = new Error("NO_INVENTORY");
+        throw e;
+      }
 
       const inv = con.inventoryItem;
       const available = Number(inv.quantityAvailable ?? 0);
+
       if (qty > available) {
         const e = new Error("QTY_EXCEED");
         e.available = available;
         throw e;
       }
 
-      const netToSeller = toNumber(con.netToSeller); // ต่อชิ้น
-      const sellerPayout = netToSeller * qty;
+      const netToSellerPerUnit = toNumber(con.netToSeller, 0);
+      const sellerPayout = netToSellerPerUnit * qty;
       const grossSale = price * qty;
 
       const commissionFee = grossSale - sellerPayout;
       if (commissionFee < 0) {
         const e = new Error("PRICE_TOO_LOW");
-        e.minSalePrice = netToSeller;
+        e.minSalePrice = netToSellerPerUnit;
         throw e;
       }
 
       const vatOnCommission = commissionFee * 0.07;
 
-      // update inventory (ตัดสต๊อก)
+      // update inventory
       const newAvailable = available - qty;
       const newSold = Number(inv.quantitySold ?? 0) + qty;
-
-      const newStatus = newAvailable === 0 ? INVENTORY_STATUS.SOLD : INVENTORY_STATUS.IN_STOCK;
+      const newStatus = newAvailable === 0 ? INVENTORY_STATUS.SOLD_OUT : INVENTORY_STATUS.IN_STOCK;
 
       const updatedInv = await tx.inventoryItem.update({
         where: { id: inv.id },
@@ -244,10 +291,10 @@ router.post("/:id/sell", async (req, res) => {
           quantitySold: newSold,
           status: newStatus,
 
-          buyerName: buyerName || null,
-          buyerPhone: buyerPhone || null,
-          buyerAddress: buyerAddress || null,
-          buyerTaxId: buyerTaxId || null,
+          buyerName: buyerName?.trim() || null,
+          buyerPhone: buyerPhone?.trim() || null,
+          buyerAddress: buyerAddress?.trim() || null,
+          buyerTaxId: buyerTaxId?.trim() || null,
 
           grossProfit: commissionFee,
           netProfit: commissionFee,
@@ -256,10 +303,13 @@ router.post("/:id/sell", async (req, res) => {
 
       const updatedCon = await tx.consignmentContract.update({
         where: { id: con.id },
-        data: { status: newAvailable === 0 ? CONSIGNMENT_STATUS.SOLD : CONSIGNMENT_STATUS.ACTIVE },
+        data: {
+          status: newAvailable === 0 ? CONSIGNMENT_STATUS.SOLD : CONSIGNMENT_STATUS.ACTIVE,
+        },
       });
 
       // cashbook:
+      // 1) IN รายรับจากลูกค้า
       await tx.cashbookEntry.create({
         data: {
           type: "IN",
@@ -271,6 +321,7 @@ router.post("/:id/sell", async (req, res) => {
         },
       });
 
+      // 2) OUT จ่ายให้ผู้ฝากขาย
       await tx.cashbookEntry.create({
         data: {
           type: "OUT",
@@ -282,6 +333,7 @@ router.post("/:id/sell", async (req, res) => {
         },
       });
 
+      // 3) IN ค่าบริการ (กำไร)
       await tx.cashbookEntry.create({
         data: {
           type: "IN",
@@ -289,23 +341,23 @@ router.post("/:id/sell", async (req, res) => {
           amount: commissionFee,
           profit: commissionFee,
           inventoryItemId: inv.id,
-          description: `ค่าบริการฝากขาย ${con.code} (VAT 7% เฉพาะค่าบริการ = ${vatOnCommission.toFixed(2)})`,
+          description: `ค่าบริการฝากขาย ${con.code} (VAT 7% เฉพาะค่าบริการ ≈ ${vatOnCommission.toFixed(2)})`,
         },
       });
 
       return { updatedInv, updatedCon, commissionFee, vatOnCommission, sellerPayout, grossSale };
     });
 
-    res.json(result);
+    return res.json({ ok: true, ...result });
   } catch (err) {
     console.error("POST /api/consignments/:id/sell error:", err);
 
-    if (String(err.message) === "NOT_FOUND") return res.status(404).json({ message: "ไม่พบสัญญาฝากขาย" });
-    if (String(err.message) === "NO_INVENTORY") return res.status(400).json({ message: "สัญญานี้ไม่มีสินค้าในคลัง" });
-    if (String(err.message) === "QTY_EXCEED") return res.status(400).json({ message: "จำนวนขายมากกว่าคงเหลือ", available: err.available });
-    if (String(err.message) === "PRICE_TOO_LOW") return res.status(400).json({ message: "ราคาขายต่ำกว่าที่สัญญากำหนด", minSalePrice: err.minSalePrice });
+    if (String(err.message) === "NOT_FOUND") return res.status(404).json({ ok: false, message: "ไม่พบสัญญาฝากขาย" });
+    if (String(err.message) === "NO_INVENTORY") return res.status(400).json({ ok: false, message: "สัญญานี้ไม่มีสินค้าในคลัง" });
+    if (String(err.message) === "QTY_EXCEED") return res.status(400).json({ ok: false, message: "จำนวนขายมากกว่าคงเหลือ", available: err.available });
+    if (String(err.message) === "PRICE_TOO_LOW") return res.status(400).json({ ok: false, message: "ราคาขายต่ำกว่าที่สัญญากำหนด", minSalePrice: err.minSalePrice });
 
-    res.status(500).json({ message: "ขายฝากขายไม่สำเร็จ", error: String(err?.message || err) });
+    return res.status(500).json({ ok: false, message: "ขายฝากขายไม่สำเร็จ", error: String(err?.message || err) });
   }
 });
 

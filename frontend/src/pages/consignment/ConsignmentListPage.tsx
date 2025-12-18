@@ -1,8 +1,8 @@
 // frontend/src/pages/consignment/ConsignmentListPage.tsx
 import React, { useEffect, useMemo, useState, ChangeEvent } from "react";
-import axios from "axios";
 import { useNavigate } from "react-router-dom";
-import { arrayFromApi } from "../../lib/arrayFromApi"; // ✅ ใช้ helper กลาง
+import { api } from "../../lib/api";
+import { arrayFromApi } from "../../lib/arrayFromApi";
 
 type ConsignmentApiRow = {
   id: number;
@@ -15,8 +15,8 @@ type ConsignmentApiRow = {
   itemName?: string | null;
   serial?: string | null;
 
-  netToSeller?: any; // Decimal/string/number
-  targetPrice?: any; // Decimal/string/number
+  netToSeller?: any;
+  targetPrice?: any;
   advanceAmount?: any;
 
   createdAt?: string;
@@ -40,7 +40,7 @@ const toNum = (v: any) => {
   return Number.isFinite(n) ? n : 0;
 };
 
-const fmtMoney = (v: any) => toNum(v).toLocaleString();
+const fmtMoney = (v: any) => toNum(v).toLocaleString("th-TH");
 
 const fmtDate = (iso?: string) => {
   if (!iso) return "-";
@@ -56,15 +56,9 @@ const isSold = (status?: string | null) => {
 
 const badge = (status?: string | null) => {
   const s = (status || "").toUpperCase();
-  if (s === "ACTIVE" || s === "IN_STOCK" || s === "READY" || s === "READY_FOR_SALE") {
-    return { text: "กำลังขาย", cls: "bg-emerald-100 text-emerald-700" };
-  }
-  if (s === "SOLD" || s === "SOLD_OUT") {
-    return { text: "ขายแล้ว", cls: "bg-slate-200 text-slate-700" };
-  }
-  if (s === "CANCELLED") {
-    return { text: "ยกเลิก", cls: "bg-rose-100 text-rose-700" };
-  }
+  if (s === "ACTIVE" || s === "IN_STOCK") return { text: "กำลังขาย", cls: "bg-emerald-100 text-emerald-700" };
+  if (s === "SOLD" || s === "SOLD_OUT") return { text: "ขายแล้ว", cls: "bg-slate-200 text-slate-700" };
+  if (s === "CANCELLED") return { text: "ยกเลิก", cls: "bg-rose-100 text-rose-700" };
   return { text: status || "-", cls: "bg-slate-100 text-slate-500" };
 };
 
@@ -78,11 +72,8 @@ export function ConsignmentListPage() {
   const fetchList = async () => {
     try {
       setLoading(true);
-
-      const res = await axios.get("/api/consignments");
-      // ✅ บังคับให้เป็น array เสมอ (รองรับ wrapper ได้หลายรูปแบบจาก helper)
+      const res = await api.get("/api/consignments");
       const list = arrayFromApi<ConsignmentApiRow>(res.data);
-
       setRows(list);
     } catch (err) {
       console.error("GET /api/consignments error:", err);
@@ -97,21 +88,15 @@ export function ConsignmentListPage() {
     fetchList();
   }, []);
 
-  const handleSearch = (e: ChangeEvent<HTMLInputElement>) => {
-    setSearch(e.target.value);
-  };
+  const handleSearch = (e: ChangeEvent<HTMLInputElement>) => setSearch(e.target.value);
 
-  // ✅ แสดงเฉพาะ “ยังไม่ขาย”
   const activeRows = useMemo(() => {
     const q = search.trim().toLowerCase();
-    const safeRows: ConsignmentApiRow[] = Array.isArray(rows) ? rows : [];
+    const safe = Array.isArray(rows) ? rows : [];
 
-    return safeRows
+    return safe
       .filter((r) => {
-        const contractSold = isSold(r.status);
-        const invSold = isSold(r.inventoryItem?.status);
-        if (contractSold || invSold) return false;
-
+        if (isSold(r.status) || isSold(r.inventoryItem?.status)) return false;
         if (!q) return true;
 
         const text = [
@@ -137,29 +122,25 @@ export function ConsignmentListPage() {
       });
   }, [rows, search]);
 
-  const countActive = activeRows.length;
-
   return (
     <div className="min-h-screen bg-slate-100">
       <div className="mx-auto max-w-6xl px-4 py-6 space-y-4">
-        {/* Header */}
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h1 className="text-lg font-semibold text-slate-900">รายการฝากขาย</h1>
-            <p className="text-xs text-slate-500">แสดงเฉพาะรายการที่ยังไม่ขายออก ({countActive} รายการ)</p>
+            <p className="text-xs text-slate-500">แสดงเฉพาะรายการที่ยังไม่ขาย ({activeRows.length} รายการ)</p>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
-              onClick={() => fetchList()}
+              onClick={fetchList}
               className="rounded-full border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 shadow-sm hover:bg-slate-50"
               disabled={loading}
             >
               {loading ? "กำลังโหลด..." : "รีเฟรช"}
             </button>
 
-            {/* ✅ ต้องอยู่ใต้ /app */}
             <button
               type="button"
               onClick={() => navigate("/app/consignments/new")}
@@ -170,7 +151,6 @@ export function ConsignmentListPage() {
           </div>
         </div>
 
-        {/* Search */}
         <div className="rounded-2xl bg-white p-4 shadow-sm">
           <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
             <div className="text-sm font-semibold text-slate-800">ค้นหา</div>
@@ -183,7 +163,6 @@ export function ConsignmentListPage() {
           </div>
         </div>
 
-        {/* Table */}
         <div className="overflow-hidden rounded-2xl bg-white shadow-sm">
           <div className="grid grid-cols-12 border-b border-slate-200 px-6 py-3 text-[11px] font-semibold uppercase text-slate-500">
             <div className="col-span-3">สัญญา</div>
@@ -202,8 +181,8 @@ export function ConsignmentListPage() {
               {activeRows.map((c) => {
                 const inv = c.inventoryItem;
                 const qtyAvail = Number(inv?.quantityAvailable ?? inv?.quantity ?? 0);
-                const statusForBadge = c.status || inv?.status || "ACTIVE";
-                const st = badge(statusForBadge);
+
+                const st = badge(c.status || inv?.status || "ACTIVE");
 
                 const displaySeller = c.sellerName || "-";
                 const displayPhone = c.sellerPhone || "";
@@ -216,7 +195,6 @@ export function ConsignmentListPage() {
 
                 return (
                   <div key={c.id} className="grid grid-cols-12 items-center border-t border-slate-100 px-6 py-4 text-sm">
-                    {/* Contract */}
                     <div className="col-span-3">
                       <div className="flex items-center gap-2">
                         <div className="font-semibold text-slate-800">{c.code}</div>
@@ -227,13 +205,11 @@ export function ConsignmentListPage() {
                       <div className="mt-0.5 text-xs text-slate-500">วันที่สร้าง: {fmtDate(c.createdAt)}</div>
                     </div>
 
-                    {/* Seller */}
                     <div className="col-span-3">
                       <div className="font-medium text-slate-800">{displaySeller}</div>
                       <div className="mt-0.5 text-xs text-slate-500">{displayPhone ? `โทร: ${displayPhone}` : "—"}</div>
                     </div>
 
-                    {/* Item */}
                     <div className="col-span-3">
                       <div className="font-medium text-slate-800">{displayItem}</div>
                       <div className="mt-0.5 text-xs text-slate-500">
@@ -250,13 +226,11 @@ export function ConsignmentListPage() {
                       </div>
                     </div>
 
-                    {/* Qty */}
                     <div className="col-span-1 text-right">
                       <div className="font-semibold text-slate-800">{qtyAvail || 0}</div>
                       <div className="text-[11px] text-slate-500">ชิ้น</div>
                     </div>
 
-                    {/* Money/Terms */}
                     <div className="col-span-2 text-right">
                       <div className="text-xs text-slate-600">
                         ลูกค้าได้สุทธิ/ชิ้น: <span className="font-semibold text-slate-800">{netToSeller}</span>
@@ -266,7 +240,6 @@ export function ConsignmentListPage() {
                       </div>
 
                       <div className="mt-2 flex justify-end gap-2">
-                        {/* ✅ ต้องอยู่ใต้ /app */}
                         <button
                           type="button"
                           onClick={() => navigate("/app/inventory")}
@@ -277,11 +250,7 @@ export function ConsignmentListPage() {
 
                         <button
                           type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            // ✅ ต้องอยู่ใต้ /app
-                            navigate(`/app/consignments/${c.id}`);
-                          }}
+                          onClick={() => navigate(`/app/consignments/${c.id}`)}
                           className="rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-50"
                         >
                           จัดการ

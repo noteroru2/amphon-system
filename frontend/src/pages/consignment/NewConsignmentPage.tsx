@@ -1,8 +1,9 @@
+// frontend/src/pages/consignment/NewConsignmentPage.tsx
 import React, { useMemo, useState } from "react";
-import axios from "axios";
 import { useNavigate } from "react-router-dom";
+import { api } from "../../lib/api";
 
-type OCRResult = { name: string; idCard: string; address: string };
+type OCRResult = { name?: string; idCard?: string; address?: string };
 
 function readFileAsDataUrl(file: File) {
   return new Promise<string>((resolve, reject) => {
@@ -41,19 +42,17 @@ export default function NewConsignmentPage() {
   const [quantity, setQuantity] = useState<number>(1);
 
   // photos (base64)
-  const [photoFiles, setPhotoFiles] = useState<File[]>([]);
   const [photoPreviews, setPhotoPreviews] = useState<string[]>([]);
 
   // id card (base64)
-  const [idCardFile, setIdCardFile] = useState<File | null>(null);
   const [idCardPreview, setIdCardPreview] = useState<string>("");
 
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState("");
 
   const commissionPreview = useMemo(() => {
-    const gross = Number(targetPrice || 0) * Number(quantity || 1);
-    const payout = Number(netToSeller || 0) * Number(quantity || 1);
+    const gross = Number(targetPrice || 0) * Math.max(1, Number(quantity || 1));
+    const payout = Number(netToSeller || 0) * Math.max(1, Number(quantity || 1));
     const fee = gross - payout;
     return { gross, payout, fee };
   }, [targetPrice, netToSeller, quantity]);
@@ -61,19 +60,16 @@ export default function NewConsignmentPage() {
   const onPickPhotos = async (files: FileList | null) => {
     if (!files) return;
     const list = Array.from(files);
-    setPhotoFiles((prev) => [...prev, ...list]);
 
     const urls = await Promise.all(list.map(readFileAsDataUrl));
     setPhotoPreviews((prev) => [...prev, ...urls]);
   };
 
   const removePhoto = (idx: number) => {
-    setPhotoFiles((prev) => prev.filter((_, i) => i !== idx));
     setPhotoPreviews((prev) => prev.filter((_, i) => i !== idx));
   };
 
   const onPickIdCard = async (file: File | null) => {
-    setIdCardFile(file);
     if (!file) {
       setIdCardPreview("");
       return;
@@ -90,14 +86,16 @@ export default function NewConsignmentPage() {
         return;
       }
       setLoading(true);
-      const res = await axios.post<OCRResult>("/api/ai/ocr-idcard", {
+
+      // ✅ ใช้ api
+      const res = await api.post("/api/ai/ocr-idcard", {
         imageDataUrl: idCardPreview,
       });
 
-      // เติมฟอร์ม
-      setSellerName(res.data.name || sellerName);
-      setSellerIdCard(res.data.idCard || sellerIdCard);
-      setSellerAddress(res.data.address || sellerAddress);
+      const d: OCRResult = res.data?.data || res.data || {};
+      setSellerName(d.name || sellerName);
+      setSellerIdCard(d.idCard || sellerIdCard);
+      setSellerAddress(d.address || sellerAddress);
     } catch (e: any) {
       console.error(e);
       setErr(e?.response?.data?.message || e?.message || "สแกนบัตรไม่สำเร็จ");
@@ -114,7 +112,8 @@ export default function NewConsignmentPage() {
         return;
       }
       setLoading(true);
-      const res = await axios.post("/api/ai/price-suggest", {
+
+      const res = await api.post("/api/ai/price-suggest", {
         name: itemName,
         spec: serial,
         condition,
@@ -122,7 +121,6 @@ export default function NewConsignmentPage() {
         desiredMarginPct: 10,
       });
 
-      // เติมราคาตั้งขาย (แนะนำ)
       if (res.data?.targetPrice != null) setTargetPrice(Number(res.data.targetPrice));
     } catch (e: any) {
       console.error(e);
@@ -151,7 +149,7 @@ export default function NewConsignmentPage() {
         condition: condition.trim() || null,
         accessories: accessories.trim() || null,
 
-        photos: photoPreviews, // ✅ backend รับ array ได้แล้ว
+        photos: photoPreviews, // ✅ backend รับ array
 
         advanceAmount: Number(advanceAmount || 0),
         netToSeller: Number(netToSeller || 0),
@@ -161,13 +159,13 @@ export default function NewConsignmentPage() {
         storageLocation: storageLocation.trim() || null,
       };
 
-      const res = await axios.post("/api/consignments", payload);
+      const res = await api.post("/api/consignments", payload);
 
-      // backend ของคุณส่งกลับ { inv, con }
       const conId = res.data?.con?.id;
       if (!conId) throw new Error("สร้างสำเร็จ แต่ไม่พบ con.id ใน response");
 
-      nav(`/consignments/${conId}`);
+      // ✅ อยู่ใต้ /app
+      nav(`/app/consignments/${conId}`);
     } catch (e: any) {
       console.error(e);
       setErr(e?.response?.data?.message || e?.message || "บันทึกไม่สำเร็จ");
@@ -228,11 +226,7 @@ export default function NewConsignmentPage() {
                 </label>
 
                 {idCardPreview ? (
-                  <img
-                    src={idCardPreview}
-                    alt="idcard"
-                    className="w-full rounded-xl border object-contain"
-                  />
+                  <img src={idCardPreview} alt="idcard" className="w-full rounded-xl border object-contain" />
                 ) : (
                   <div className="rounded-xl border border-dashed bg-slate-50 p-4 text-xs text-slate-500">
                     แนบรูปบัตรเพื่อให้ OCR เติมข้อมูลอัตโนมัติ
@@ -409,9 +403,7 @@ export default function NewConsignmentPage() {
                     ค่าบริการฝากขาย (ก่อน VAT):{" "}
                     <span className="font-semibold">{money(commissionPreview.fee)}</span> บาท
                   </div>
-                  <div className="text-xs text-slate-500 mt-1">
-                    VAT 7% คิดเฉพาะค่าบริการ (ระบบจะบันทึกตอนขายจริง)
-                  </div>
+                  <div className="text-xs text-slate-500 mt-1">VAT 7% คิดเฉพาะค่าบริการ (บันทึกตอนขายจริง)</div>
                 </div>
               </div>
 
