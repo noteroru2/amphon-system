@@ -14,6 +14,7 @@ type ItemDetail = {
   serial?: string;
   status: string;
   cost: number;
+  targetPrice?: number;
   sellingPrice?: number;
   quantityAvailable: number;
   buyerName?: string;
@@ -26,11 +27,16 @@ const InventorySellPage: React.FC = () => {
   const { id } = useParams();
   const navigate = useNavigate();
 
-  const { data: item, isLoading, mutate } = useSWR<ItemDetail>(
-    id ? `/api/inventory/${id}?t=${Date.now()}` : null,
-    fetcher,
-    { revalidateOnFocus: false }
-  );
+  // ✅ key ต้องนิ่ง ห้ามมี Date.now()
+  const swrKey = id ? `/api/inventory/${id}` : null;
+
+  const { data: item, isLoading, mutate } = useSWR<ItemDetail>(swrKey, fetcher, {
+    revalidateOnFocus: false,
+    revalidateOnReconnect: false,
+    refreshInterval: 0,
+    dedupingInterval: 10_000, // กันยิงซ้ำถี่ๆ
+    shouldRetryOnError: false,
+  });
 
   const [price, setPrice] = useState("");
   const [sellQty, setSellQty] = useState(1);
@@ -42,12 +48,16 @@ const InventorySellPage: React.FC = () => {
 
   const [submitting, setSubmitting] = useState(false);
 
-  // ✅ ตั้งค่า default เมื่อโหลด item เสร็จ
+  // ✅ ตั้งค่า default เมื่อโหลด item เสร็จ (ครั้งแรก)
   useEffect(() => {
     if (!item) return;
 
     const initial =
-      item.sellingPrice && item.sellingPrice > 0 ? item.sellingPrice : item.cost;
+      item.sellingPrice && item.sellingPrice > 0
+        ? item.sellingPrice
+        : item.targetPrice && item.targetPrice > 0
+          ? item.targetPrice
+          : item.cost;
 
     setPrice(String(initial || ""));
     setBuyerName(item.buyerName || "");
@@ -55,26 +65,27 @@ const InventorySellPage: React.FC = () => {
     setBuyerAddress(item.buyerAddress || "");
     setBuyerTaxId(item.buyerTaxId || "");
     setSellQty(1);
-  }, [item]);
+  }, [item?.id]); // ✅ อย่าผูกกับ item ทั้งก้อน (กัน reset ตอน mutate)
 
   const onSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!item) return;
 
     const numPrice = Number(price);
+    const qty = Number(sellQty);
 
     if (!Number.isFinite(numPrice) || numPrice <= 0) {
       alert("กรุณาระบุราคาขายให้ถูกต้อง");
       return;
     }
 
-    if (sellQty <= 0 || sellQty > item.quantityAvailable) {
+    if (!Number.isFinite(qty) || qty <= 0 || qty > item.quantityAvailable) {
       alert(`จำนวนขายต้องอยู่ระหว่าง 1 - ${item.quantityAvailable}`);
       return;
     }
 
     const ok = window.confirm(
-      `ยืนยันขายสินค้า ${item.name}\nจำนวน ${sellQty} ชิ้น\nราคาชิ้นละ ${numPrice.toLocaleString()} บาท`
+      `ยืนยันขายสินค้า ${item.name}\nจำนวน ${qty} ชิ้น\nราคาชิ้นละ ${numPrice.toLocaleString()} บาท`
     );
     if (!ok) return;
 
@@ -83,25 +94,24 @@ const InventorySellPage: React.FC = () => {
       // 1) บันทึกการขาย
       await api.post(`/api/inventory/${item.id}/sell`, {
         sellingPrice: numPrice,
-        quantity: sellQty,
+        quantity: qty,
         buyerName: buyerName || null,
         buyerPhone: buyerPhone || null,
         buyerAddress: buyerAddress || null,
         buyerTaxId: buyerTaxId || null,
       });
 
-      // 2) รีเฟรชข้อมูลล่าสุด (เพื่อเอา title/serial/buyer ล่าสุด)
+      // 2) รีเฟรชข้อมูลล่าสุด (ครั้งเดียวพอ)
       await mutate();
 
       // 3) พิมพ์ใบเสร็จ (ยอดรวมจริง)
-      const totalAmount = numPrice * sellQty;
+      const totalAmount = numPrice * qty;
 
-      // printReceipt ต้องการ item + price รวม
       printReceipt(
         {
           ...(item as any),
           title: item.title || item.name,
-          quantitySold: sellQty,
+          quantitySold: qty,
           buyerName: buyerName || undefined,
           buyerPhone: buyerPhone || undefined,
           buyerAddress: buyerAddress || undefined,
@@ -110,7 +120,6 @@ const InventorySellPage: React.FC = () => {
         totalAmount
       );
 
-      // ✅ กลับหน้าคลัง (ปรับให้ตรง routing ของคุณ)
       navigate("/app/inventory");
     } catch (err) {
       console.error("ขายสินค้าล้มเหลว:", err);
@@ -168,7 +177,7 @@ const InventorySellPage: React.FC = () => {
             />
 
             <div className="mt-1 text-[10px] text-slate-400">
-              คงเหลือ {item.quantityAvailable} ชิ้น · ทุน {item.cost.toLocaleString()} บาท
+              คงเหลือ {item.quantityAvailable} ชิ้น · ทุน {Number(item.cost ?? 0).toLocaleString()} บาท
             </div>
           </div>
 
