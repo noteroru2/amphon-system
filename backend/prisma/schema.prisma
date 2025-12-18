@@ -57,6 +57,7 @@ model Customer {
   contracts Contract[]
 
   inventoryItemsBought InventoryItem[] @relation("InventoryBuyer")
+  inventoryItemsSold  InventoryItem[] @relation("InventorySeller")
 }
 
 model Contract {
@@ -152,6 +153,11 @@ model InventoryItem {
   netProfit   Decimal? // กำไรสุทธิ (หลังหักส่วนลด/ต้นทุนอื่น ฯลฯ)
 
   status InventoryStatus @default(IN_STOCK)
+
+  // ✅ ผู้ขายให้ร้าน (ตอนรับซื้อเข้า)
+  sellerCustomerId Int?
+  sellerCustomer   Customer? @relation("InventorySeller", fields: [sellerCustomerId], references: [id])
+  
 
   // ผู้ซื้อ (ตอนขายออก)
   buyerName       String?

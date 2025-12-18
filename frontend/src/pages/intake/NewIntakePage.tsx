@@ -1,7 +1,7 @@
 // src/pages/intake/NewIntakePage.tsx
 import React, { useEffect, useMemo, useState, ChangeEvent, FormEvent } from "react";
 import { useNavigate } from "react-router-dom";
-import { api } from "../../lib/api"; // ✅ axios instance ที่ชี้ไป backend (Render)
+import { api } from "../../lib/api"; // axios instance ชี้ backend
 
 function fileToBase64(file: File): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -25,13 +25,18 @@ type BuyInForm = {
   accessories: string;
 
   quantity: string;
-  unitPrice: string;
-  targetPrice: string;
+  unitPrice: string;   // ราคาต่อชิ้น
+  targetPrice: string; // ราคาตั้งขายต่อชิ้น
 
   notes: string;
 };
 
 type EvidenceType = "product" | "idcard" | "contract";
+
+const toNum = (v: any) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+};
 
 const NewIntakePage: React.FC = () => {
   const navigate = useNavigate();
@@ -55,6 +60,7 @@ const NewIntakePage: React.FC = () => {
     notes: "",
   });
 
+  // รูปยังเก็บไว้เป็น “หลักฐานใน UI” ได้ แต่ intake แบบใหม่ยังไม่ส่งขึ้น backend
   const [productFiles, setProductFiles] = useState<FileList | null>(null);
   const [idCardFiles, setIdCardFiles] = useState<FileList | null>(null);
   const [contractFiles, setContractFiles] = useState<FileList | null>(null);
@@ -68,7 +74,6 @@ const NewIntakePage: React.FC = () => {
 
   const [submitting, setSubmitting] = useState(false);
 
-  // cleanup object URLs (กัน memory leak)
   useEffect(() => {
     return () => {
       if (productPreview) URL.revokeObjectURL(productPreview);
@@ -83,7 +88,11 @@ const NewIntakePage: React.FC = () => {
     setForm((prev) => ({ ...prev, [name]: value }));
   };
 
-  const setPreviewSafe = (setter: (v: string | null) => void, prev: string | null, next: string) => {
+  const setPreviewSafe = (
+    setter: (v: string | null) => void,
+    prev: string | null,
+    next: string
+  ) => {
     if (prev) URL.revokeObjectURL(prev);
     setter(next);
   };
@@ -106,7 +115,7 @@ const NewIntakePage: React.FC = () => {
         setIdCardFiles(files);
         setPreviewSafe(setIdCardPreview, idCardPreview, url);
 
-        // ✅ OCR ทันทีจากรูปแรก
+        // OCR ทันทีจากรูปแรก
         runOcrIdCard(first).catch((err) => console.error("runOcrIdCard error:", err));
         return;
       }
@@ -121,8 +130,6 @@ const NewIntakePage: React.FC = () => {
       setOcrLoading(true);
 
       const dataUrl = await fileToBase64(file);
-
-      // data:image/...;base64,XXXX
       const [, base64Part] = dataUrl.split(",");
       const pureBase64 = base64Part || dataUrl;
 
@@ -133,7 +140,6 @@ const NewIntakePage: React.FC = () => {
         fileName: file.name,
       };
 
-      // ✅ ยิงไป backend จริง
       const res = await api.post("/api/ai/ocr-idcard", payload, {
         headers: { "Content-Type": "application/json" },
       });
@@ -162,30 +168,34 @@ const NewIntakePage: React.FC = () => {
     }
   };
 
+  const qtyNum = useMemo(() => Math.max(1, Math.floor(toNum(form.quantity || "1"))), [form.quantity]);
+  const unitNum = useMemo(() => toNum(form.unitPrice || "0"), [form.unitPrice]);
+  const targetNum = useMemo(() => toNum(form.targetPrice || "0"), [form.targetPrice]);
+
+  // ✅ cost ใน schema เป็น “ทุนรวมของ lot”
+  const totalCost = useMemo(() => {
+    const x = qtyNum * unitNum;
+    return Number.isFinite(x) ? x : 0;
+  }, [qtyNum, unitNum]);
+
+  const money = (n: number) => Number(n || 0).toLocaleString("th-TH");
+
   const validate = (): string | null => {
     if (!form.sellerName.trim()) return "กรุณากรอกชื่อ-นามสกุลผู้ขาย";
-    if (!form.sellerIdCard.trim()) return "กรุณากรอกเลขบัตรประชาชน (หรือใช้สแกนบัตร)";
+    if (!form.sellerIdCard.trim() && !form.sellerPhone.trim())
+      return "กรุณากรอกเลขบัตรประชาชน หรือ เบอร์โทร (อย่างน้อย 1 อย่าง)";
     if (!form.brandModel.trim()) return "กรุณากรอกชื่อสินค้า / รุ่น (Brand/Model)";
 
-    if (!productFiles || productFiles.length === 0) return "กรุณาอัปโหลดรูปสินค้าขั้นต่ำ 1 รูป";
-    if (!idCardFiles || idCardFiles.length === 0) return "กรุณาอัปโหลดรูปบัตรประชาชนผู้ขายอย่างน้อย 1 รูป";
+    if (!qtyNum || qtyNum <= 0) return "กรุณาระบุจำนวนที่รับซื้อให้ถูกต้อง";
+    if (!unitNum || unitNum <= 0) return "กรุณาระบุราคาต่อชิ้น (ต้นทุนต่อชิ้น) ให้ถูกต้อง";
 
-    const qty = Number(form.quantity || "0");
-    const unit = Number(form.unitPrice || "0");
-    if (!qty || qty <= 0) return "กรุณาระบุจำนวนที่รับซื้อให้ถูกต้อง";
-    if (!unit || unit <= 0) return "กรุณาระบุราคาต่อชิ้น (ต้นทุนต่อชิ้น) ให้ถูกต้อง";
+    // ✅ รูปหลักฐาน: ตอนนี้ไม่บังคับ เพราะ intake endpoint ใหม่เป็น JSON
+    // ถ้าคุณอยากบังคับเหมือนเดิม เปิด 2 บรรทัดนี้กลับได้
+    // if (!productFiles || productFiles.length === 0) return "กรุณาอัปโหลดรูปสินค้าขั้นต่ำ 1 รูป";
+    // if (!idCardFiles || idCardFiles.length === 0) return "กรุณาอัปโหลดรูปบัตรประชาชนผู้ขายอย่างน้อย 1 รูป";
 
     return null;
   };
-
-  const totalCost = useMemo(() => {
-    const qty = Number(form.quantity || "0");
-    const unit = Number(form.unitPrice || "0");
-    if (!Number.isFinite(qty * unit)) return 0;
-    return qty * unit;
-  }, [form.quantity, form.unitPrice]);
-
-  const money = (n: number) => n.toLocaleString();
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -194,54 +204,55 @@ const NewIntakePage: React.FC = () => {
     if (msg) return alert(msg);
 
     const ok = window.confirm(
-      `ยืนยันรับซื้อสินค้าเข้า stk จำนวน ${form.quantity} ชิ้น เป็นเงินรวม ${money(totalCost)} บาทหรือไม่?`
+      `ยืนยันรับซื้อสินค้าเข้า (PURCHASE)\nจำนวน ${qtyNum} ชิ้น\nต้นทุนรวม ${money(totalCost)} บาท ?`
     );
     if (!ok) return;
 
     try {
       setSubmitting(true);
 
-      const fd = new FormData();
+      // ✅ payload ให้ตรง backend /api/inventory/intake (JSON)
+      const payload = {
+        seller: {
+          name: form.sellerName.trim(),
+          idCard: form.sellerIdCard.trim() || undefined,
+          phone: form.sellerPhone.trim() || undefined,
+          address: form.sellerAddress.trim() || undefined,
+          lineId: form.sellerLineId.trim() || undefined,
+        },
+        item: {
+          name: form.brandModel.trim(),
+          serial: form.serial.trim() || undefined,
+          condition: form.condition.trim() || undefined,
+          accessories: form.accessories.trim() || undefined,
+          storageLocation: undefined, // ถ้าคุณมีช่อง storage ให้ใส่ได้
+        },
+        pricing: {
+          cost: totalCost,                  // ✅ ทุนรวม
+          targetPrice: targetNum || undefined, // ✅ ราคาตั้งขายต่อชิ้น (optional)
+          appraisedPrice: undefined,
+        },
+        meta: {
+          quantity: qtyNum, // ถ้าคุณอยากให้ backend เซฟ quantity ด้วย (ต้องแก้ backend ให้รองรับ)
+          unitPrice: unitNum,
+          notes: form.notes || "",
+        },
+      };
 
-      // ผู้ขาย
-      fd.append("sellerName", form.sellerName);
-      fd.append("sellerIdCard", form.sellerIdCard);
-      fd.append("sellerPhone", form.sellerPhone);
-      fd.append("sellerAddress", form.sellerAddress);
-      fd.append("sellerLineId", form.sellerLineId);
-
-      // สินค้า
-      fd.append("brandModel", form.brandModel);
-      fd.append("serial", form.serial);
-      fd.append("condition", form.condition);
-      fd.append("accessories", form.accessories);
-
-      // การเงิน
-      fd.append("quantity", form.quantity);
-      fd.append("unitPrice", form.unitPrice);
-      fd.append("purchaseTotal", String(totalCost));
-      fd.append("targetPrice", form.targetPrice);
-
-      fd.append("notes", form.notes || "");
-      fd.append("sourceType", "BUY_IN");
-
-      // รูปหลักฐาน
-      if (productFiles) Array.from(productFiles).forEach((f) => fd.append("productPhotos", f));
-      if (idCardFiles) Array.from(idCardFiles).forEach((f) => fd.append("idCardPhotos", f));
-      if (contractFiles) Array.from(contractFiles).forEach((f) => fd.append("contractPhotos", f));
-
-      // ✅ ยิงไป backend จริง (Render)
-      await api.post("/api/intake", fd, {
-        // ปล่อยให้ axios ตั้ง boundary เองดีที่สุด
-        // headers: { "Content-Type": "multipart/form-data" },
+      // ✅ ยิง endpoint ใหม่ (สำคัญมาก)
+      await api.post("/api/inventory/intake", payload, {
+        headers: { "Content-Type": "application/json" },
       });
 
-      alert("บันทึกการรับซื้อสินค้าเรียบร้อย");
-      navigate("/app/inventory");
+      alert("บันทึกการรับซื้อสินค้าเรียบร้อย (ผูกลูกค้าแล้ว)");
+      navigate("/app/customers"); // แนะนำให้ไปดูผลที่แท็บลูกค้าเลย
     } catch (err: any) {
-      console.error("POST /api/intake error", err);
-      const msg = err?.response?.data?.message || "ไม่สามารถบันทึกการรับเข้าได้ กรุณาลองใหม่";
-      alert(msg);
+      console.error("POST /api/inventory/intake error", err);
+      const msg2 =
+        err?.response?.data?.message ||
+        err?.response?.data?.error ||
+        "ไม่สามารถบันทึกการรับเข้าได้ กรุณาลองใหม่";
+      alert(msg2);
     } finally {
       setSubmitting(false);
     }
@@ -254,7 +265,7 @@ const NewIntakePage: React.FC = () => {
           <div>
             <h1 className="text-xl font-semibold text-slate-800">รับซื้อสินค้า (Buy In)</h1>
             <p className="text-sm text-slate-500">
-              บันทึกการรับซื้อสินค้าเข้าสต๊อก พร้อมบันทึกรายจ่ายอัตโนมัติ
+              บันทึกการรับซื้อสินค้าเข้าสต๊อก พร้อมผูกผู้ขายเข้ากับลูกค้า (ทำให้แท็บ “มาขาย” ขึ้นแน่นอน)
             </p>
           </div>
           <button
@@ -267,9 +278,8 @@ const NewIntakePage: React.FC = () => {
         </div>
 
         <form onSubmit={handleSubmit} className="rounded-2xl bg-white p-6 shadow-sm">
-          {/* 1 & 2: ผู้ขาย + สินค้า */}
           <div className="grid gap-6 md:grid-cols-2">
-            {/* ซ้าย: ผู้ขาย */}
+            {/* ผู้ขาย */}
             <section>
               <h2 className="mb-4 text-base font-semibold text-slate-800">
                 1. ข้อมูลผู้ขาย (ลูกค้า)
@@ -284,7 +294,7 @@ const NewIntakePage: React.FC = () => {
               </div>
 
               <div className="mb-4">
-                <label className="mb-1 block text-xs font-medium text-slate-700">รูปบัตรประชาชน</label>
+                <label className="mb-1 block text-xs font-medium text-slate-700">รูปบัตรประชาชน (ไม่บังคับ)</label>
                 <div className="flex items-center gap-3">
                   <label className="flex h-24 w-24 cursor-pointer items-center justify-center rounded-xl border border-dashed border-slate-300 bg-slate-50 text-xs text-slate-500 hover:bg-slate-100">
                     <span>+ เพิ่มรูป</span>
@@ -319,7 +329,7 @@ const NewIntakePage: React.FC = () => {
                 </div>
 
                 <div>
-                  <label className="mb-1 block text-xs font-medium text-slate-700">เลขบัตรประชาชน</label>
+                  <label className="mb-1 block text-xs font-medium text-slate-700">เลขบัตรประชาชน (แนะนำ)</label>
                   <input
                     name="sellerIdCard"
                     value={form.sellerIdCard}
@@ -327,6 +337,9 @@ const NewIntakePage: React.FC = () => {
                     className="w-full rounded-lg border border-slate-300 px-3 py-2 text-sm shadow-sm focus:border-sky-500 focus:outline-none focus:ring-1 focus:ring-sky-500"
                     placeholder="134xxxxxxxxxx"
                   />
+                  <div className="mt-1 text-[11px] text-slate-500">
+                    * ใช้ idCard จะ upsert ได้ชัวร์ที่สุด
+                  </div>
                 </div>
 
                 <div className="grid grid-cols-2 gap-3">
@@ -365,7 +378,7 @@ const NewIntakePage: React.FC = () => {
               </div>
             </section>
 
-            {/* ขวา: สินค้า */}
+            {/* สินค้า */}
             <section>
               <h2 className="mb-4 text-base font-semibold text-slate-800">2. ข้อมูลสินค้า</h2>
 
@@ -422,7 +435,7 @@ const NewIntakePage: React.FC = () => {
 
                 <div className="mt-2">
                   <label className="mb-1 block text-xs font-medium text-slate-700">
-                    รูปภาพสินค้า (อย่างน้อย 1 รูป)
+                    รูปภาพสินค้า (ไม่บังคับในเวอร์ชันนี้)
                   </label>
                   <div className="flex items-center gap-3">
                     <label className="flex h-24 w-24 cursor-pointer items-center justify-center rounded-xl border border-dashed border-slate-300 bg-slate-50 text-xs text-slate-500 hover:bg-slate-100">
@@ -487,7 +500,7 @@ const NewIntakePage: React.FC = () => {
             </section>
           </div>
 
-          {/* 3. Pricing */}
+          {/* Pricing */}
           <section className="mt-6 rounded-2xl border border-slate-200 bg-slate-50 p-4">
             <h2 className="mb-3 text-base font-semibold text-slate-800">3. ราคา (Pricing)</h2>
 
@@ -531,9 +544,6 @@ const NewIntakePage: React.FC = () => {
                   placeholder="0"
                   inputMode="numeric"
                 />
-                <p className="mt-1 text-[11px] text-slate-500">
-                  * ราคาหน้าร้านต่อชิ้น (แก้ไขได้ภายหลัง)
-                </p>
               </div>
             </div>
 
@@ -560,7 +570,6 @@ const NewIntakePage: React.FC = () => {
             </div>
           </section>
 
-          {/* ปุ่มบันทึก */}
           <div className="mt-6 flex flex-col items-center justify-between gap-3 border-t border-slate-200 pt-4 md:flex-row">
             <button
               type="button"
@@ -578,6 +587,10 @@ const NewIntakePage: React.FC = () => {
             >
               {submitting ? "กำลังบันทึก..." : "ยืนยันการรับซื้อ"}
             </button>
+          </div>
+
+          <div className="mt-3 text-[11px] text-slate-500">
+            * เวอร์ชันนี้โฟกัส “ผูกผู้ขายกับลูกค้าให้แท็บมาขายขึ้นแน่นอน” (รูปหลักฐานยังไม่อัปโหลดขึ้นระบบ)
           </div>
         </form>
       </div>

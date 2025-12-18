@@ -12,6 +12,54 @@ const toNumber = (v) => {
   return Number.isFinite(n) ? n : 0;
 };
 
+async function upsertCustomerBySeller(tx, seller) {
+  const name = (seller?.name || "").toString().trim();
+  const phone = (seller?.phone || "").toString().trim();
+  const idCard = (seller?.idCard || "").toString().trim();
+  const address = (seller?.address || "").toString().trim();
+
+  if (!idCard && !phone && !name) return null;
+
+  if (idCard) {
+    return tx.customer.upsert({
+      where: { idCard },
+      update: {
+        name: name || undefined,
+        phone: phone || undefined,
+        address: address || undefined,
+      },
+      create: {
+        name: name || "ลูกค้า",
+        idCard,
+        phone: phone || null,
+        address: address || null,
+      },
+    });
+  }
+
+  if (phone) {
+    const found = await tx.customer.findFirst({ where: { phone } });
+    if (!found) {
+      return tx.customer.create({
+        data: { name: name || "ลูกค้า", phone, address: address || null },
+      });
+    }
+    if (name || address) {
+      return tx.customer.update({
+        where: { id: found.id },
+        data: {
+          name: name || found.name,
+          address: address || found.address,
+        },
+      });
+    }
+    return found;
+  }
+
+  return tx.customer.create({ data: { name: name || "ลูกค้า" } });
+}
+
+
 const getAvailable = (item) => {
   const qa = item?.quantityAvailable;
   if (qa !== null && qa !== undefined && Number.isFinite(Number(qa))) {
@@ -473,5 +521,79 @@ router.post("/bulk-sell", async (req, res) => {
     return res.status(500).json({ message: "ขายหลายชิ้นไม่สำเร็จ", error: String(err) });
   }
 });
+
+// POST /api/inventory/intake
+// รับซื้อเข้า (PURCHASE) + ผูก sellerCustomerId
+router.post("/intake", async (req, res) => {
+  try {
+    const {
+      seller, // {name, phone, idCard?, address?}
+      item,   // {name, serial?, condition?, accessories?, storageLocation?}
+      pricing // {cost, targetPrice?, appraisedPrice?}
+    } = req.body || {};
+
+    const name = (item?.name || "").toString().trim();
+    if (!name) return res.status(400).json({ message: "item.name ห้ามว่าง" });
+
+    const cost = Number(pricing?.cost ?? 0);
+    if (!Number.isFinite(cost) || cost <= 0) {
+      return res.status(400).json({ message: "pricing.cost ต้องมากกว่า 0" });
+    }
+
+    const result = await prisma.$transaction(async (tx) => {
+      const sellerCustomer = await upsertCustomerBySeller(tx, seller);
+
+      // สร้าง code แบบง่าย (คุณจะเปลี่ยนเป็น format สวย ๆ ก็ได้)
+      const code = `INV-${Date.now()}`;
+
+      const created = await tx.inventoryItem.create({
+        data: {
+          code,
+          name,
+          serial: item?.serial || null,
+          condition: item?.condition || null,
+          accessories: item?.accessories || null,
+          storageLocation: item?.storageLocation || null,
+
+          sourceType: "PURCHASE",
+          cost: cost,
+          appraisedPrice: pricing?.appraisedPrice ?? null,
+          targetPrice: pricing?.targetPrice ?? null,
+
+          quantity: 1,
+          quantityAvailable: 1,
+          quantitySold: 0,
+          status: "IN_STOCK",
+
+          sellerCustomerId: sellerCustomer ? sellerCustomer.id : null,
+        },
+      });
+
+      // (ถ้าคุณอยากให้รับซื้อเข้าไปลง cashbook ด้วย ให้เปิดอันนี้)
+      await tx.cashbookEntry.create({
+        data: {
+          type: "OUT",
+          category: "INVENTORY_BUY_IN",
+          amount: cost,
+          profit: 0,
+          inventoryItemId: created.id,
+          description: `รับซื้อเข้า ${created.name} (${created.code})`,
+        },
+      });
+
+      return { created, sellerCustomer };
+    });
+
+    return res.json({
+      ok: true,
+      inventoryItem: result.created,
+      sellerCustomer: result.sellerCustomer,
+    });
+  } catch (err) {
+    console.error("POST /api/inventory/intake error:", err);
+    return res.status(500).json({ message: "รับซื้อเข้าไม่สำเร็จ", error: err?.message || String(err) });
+  }
+});
+
 
 export default router;

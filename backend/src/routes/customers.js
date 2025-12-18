@@ -33,6 +33,7 @@ router.get("/", async (req, res) => {
       include: {
         contracts: { select: { id: true, type: true } },
         inventoryItemsBought: { select: { id: true }, take: 1 }, // ✅ BUYER จาก buyerCustomerId
+        inventoryItemsSold: { select: { id: true }, take: 1 },
       },
       orderBy: { createdAt: "desc" },
     });
@@ -50,6 +51,7 @@ router.get("/", async (req, res) => {
       // CONSIGNOR (ฝากขาย) จาก ConsignmentContract seller
       const idCardKey = c.idCard ? String(c.idCard).trim() : "";
       const phoneKey = c.phone ? String(c.phone).trim() : "";
+      const soldToShop = (c.inventoryItemsSold?.length || 0) > 0;
       const isConsignor =
         (idCardKey && consignmentByIdCard.has(idCardKey)) ||
         (phoneKey && consignmentByPhone.has(phoneKey));
