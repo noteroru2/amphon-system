@@ -30,6 +30,8 @@ router.get("/", async (req, res) => {
 
         // ✅ มาซื้อ: inventory ที่ผูก buyerCustomerId
         inventoryItemsBought: { select: { id: true }, take: 1 },
+
+        inventoryItemsSold: { select: { id: true }, take: 1 },
       },
       orderBy: { createdAt: "desc" },
     });
@@ -57,6 +59,8 @@ router.get("/", async (req, res) => {
 
       // BUYER
       if ((c.inventoryItemsBought || []).length > 0) segments.push("BUYER");
+
+      if ((c.inventoryItemsSold || []).length > 0) segments.push("SELLER"); // ✅ มาขาย
 
       // DEPOSITOR
       if ((c.contracts || []).length > 0) segments.push("DEPOSITOR");

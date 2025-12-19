@@ -242,7 +242,7 @@ const InventoryPage: React.FC = () => {
                 const qtyTotal = Math.max(Number(item.quantity ?? 1), 1);
                 const unitCost =
                   qtyTotal > 1
-                    ? Number(item.cost ?? 0) / qtyTotal
+                    ? Number(item.cost ?? 0)
                     : Number(item.cost ?? 0);
 
                 const showSellPrice =
