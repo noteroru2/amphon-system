@@ -3,35 +3,42 @@ import { useState } from "react";
 import { MainLayout } from "./layouts/MainLayout";
 import { LoginPage } from "./pages/LoginPage";
 
-import EmployeeHomePage from "./pages/HomePage.tsx";
+import EmployeeHomePage from "./pages/HomePage";
 
+// ฝากดูแล
 import NewDepositPage from "./pages/deposit/NewDepositPage";
 import { DepositListPage } from "./pages/deposit/DepositListPage";
 import { DepositHistoryPage } from "./pages/deposit/DepositHistoryPage";
 
+// สัญญา
 import { ContractDetailPage } from "./pages/contracts/ContractDetailPage";
 import { RenewContractPage } from "./pages/contracts/RenewContractPage";
 import { RedeemContractPage } from "./pages/contracts/RedeemContractPage";
 import { AdjustPrincipalPage } from "./pages/contracts/AdjustPrincipalPage";
 import { ForfeitContractPage } from "./pages/contracts/ForfeitContractPage";
 
+// คลัง / ขาย / รับเข้า
 import InventoryPage from "./pages/InventoryPage";
 import InventorySellPage from "./pages/inventory/InventorySellPage";
 import InventoryBulkSellPage from "./pages/inventory/InventoryBulkSellPage";
-
 import NewIntakePage from "./pages/intake/NewIntakePage";
 
+// ลูกค้า
+import CustomersPage from "./pages/admin/CustomersPage";
 import CustomerDetailPage from "./pages/customers/CustomerDetailPage";
-import PriceAssessmentPage from "./pages/PriceAssessmentPage";
 
+// ฝากขาย
 import { ConsignmentListPage } from "./pages/consignment/ConsignmentListPage";
 import NewConsignmentPage from "./pages/consignment/NewConsignmentPage";
 import ConsignmentDetailPage from "./pages/consignment/ConsignmentDetailPage";
 
+// Admin
 import StatsReportPage from "./pages/admin/StatsReportPage";
-import CustomersPage from "./pages/admin/CustomersPage";
 import { CashbookPage } from "./pages/admin/CashbookPage";
+import AdminDashboardPage from "./pages/admin/DashboardPage";
 
+// อื่น ๆ
+import PriceAssessmentPage from "./pages/PriceAssessmentPage";
 import ApiTestPage from "./pages/ApiTestPage";
 
 export type UserRole = "ADMIN" | "STAFF" | null;
@@ -57,38 +64,14 @@ export default function App() {
 
   return (
     <Routes>
-      {/* ✅ หน้าแรก = login */}
+      {/* login */}
       <Route path="/" element={<Navigate to="/login" replace />} />
       <Route path="/login" element={<LoginPage onLoggedIn={setRole} />} />
 
-      {/* ✅ รองรับลิงก์/โค้ดเก่า (ไม่มี /app) ให้ redirect เข้า /app อัตโนมัติ */}
-      <Route path="/deposit/new" element={<Navigate to="/app/deposit/new" replace />} />
-      <Route path="/deposit/list" element={<Navigate to="/app/deposit/list" replace />} />
-      <Route path="/deposit/history" element={<Navigate to="/app/deposit/history" replace />} />
-
-      <Route path="/contracts/:id" element={<Navigate to="/app/contracts/:id" replace />} />
-      <Route path="/contracts/:id/renew" element={<Navigate to="/app/contracts/:id/renew" replace />} />
-      <Route path="/contracts/:id/redeem" element={<Navigate to="/app/contracts/:id/redeem" replace />} />
-      <Route path="/contracts/:id/cut-principal" element={<Navigate to="/app/contracts/:id/cut-principal" replace />} />
-      <Route path="/contracts/:id/forfeit" element={<Navigate to="/app/contracts/:id/forfeit" replace />} />
-
-      <Route path="/consignments" element={<Navigate to="/app/consignments" replace />} />
-      <Route path="/consignments/new" element={<Navigate to="/app/consignments/new" replace />} />
-      <Route path="/consignments/:id" element={<Navigate to="/app/consignments/:id" replace />} />
-
-      <Route path="/inventory" element={<Navigate to="/app/inventory" replace />} />
-      <Route path="/inventory/sell/:id" element={<Navigate to="/app/inventory/sell/:id" replace />} />
-      <Route path="/inventory/bulk-sell" element={<Navigate to="/app/inventory/bulk-sell" replace />} />
-      <Route path="/intake/new" element={<Navigate to="/app/intake/new" replace />} />
-
+      {/* redirect legacy paths */}
       <Route path="/customers/:id" element={<Navigate to="/app/customers/:id" replace />} />
-      <Route path="/price-check" element={<Navigate to="/app/price-check" replace />} />
 
-      <Route path="/admin/stats" element={<Navigate to="/app/admin/stats" replace />} />
-      <Route path="/admin/customers" element={<Navigate to="/app/admin/customers" replace />} />
-      <Route path="/admin/cashbook" element={<Navigate to="/app/admin/cashbook" replace />} />
-
-      {/* ✅ แอพจริงอยู่ใต้ /app */}
+      {/* app */}
       <Route
         path="/app"
         element={
@@ -97,7 +80,13 @@ export default function App() {
           </ProtectedRoute>
         }
       >
-        <Route index element={<EmployeeHomePage />} />
+        {/* ⭐ index: แยกตาม role */}
+        <Route
+          index
+          element={
+            role === "ADMIN" ? <AdminDashboardPage /> : <EmployeeHomePage />
+          }
+        />
 
         {/* ฝากดูแล */}
         <Route path="deposit/new" element={<NewDepositPage />} />
@@ -116,13 +105,13 @@ export default function App() {
         <Route path="consignments/new" element={<NewConsignmentPage />} />
         <Route path="consignments/:id" element={<ConsignmentDetailPage />} />
 
-        {/* คลัง/ขาย/รับเข้า */}
+        {/* คลัง */}
         <Route path="inventory" element={<InventoryPage />} />
         <Route path="inventory/sell/:id" element={<InventorySellPage />} />
         <Route path="inventory/bulk-sell" element={<InventoryBulkSellPage />} />
         <Route path="intake/new" element={<NewIntakePage />} />
 
-        {/* ลูกค้า/ประเมินราคา */}
+        {/* ลูกค้า */}
         <Route path="customers/:id" element={<CustomerDetailPage />} />
         <Route path="price-check" element={<PriceAssessmentPage />} />
 
@@ -133,8 +122,6 @@ export default function App() {
       </Route>
 
       <Route path="/api-test" element={<ApiTestPage />} />
-
-      {/* fallback: ถ้าเข้า path แปลก ๆ ให้กลับไปหน้า login */}
       <Route path="*" element={<Navigate to="/login" replace />} />
     </Routes>
   );

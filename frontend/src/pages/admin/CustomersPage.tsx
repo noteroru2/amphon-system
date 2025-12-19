@@ -3,7 +3,8 @@ import { api, getApiErrorMessage } from "../../lib/api";
 import { arrayFromApi } from "../../lib/arrayFromApi";
 import { Link } from "react-router-dom";
 
-type Segment = "BUYER" | "CONSIGNOR" | "DEPOSITOR";
+// ✅ เพิ่ม SELLER ให้ตรงกับ backend
+type Segment = "BUYER" | "SELLER" | "CONSIGNOR" | "DEPOSITOR";
 
 type CustomerRow = {
   id: number;
@@ -22,8 +23,17 @@ function maskIdCard(v?: string | null) {
   return s.slice(0, 1) + "-xxxx-xxxxx-xx-" + s.slice(-1);
 }
 
-// ✅ normalize แถวลูกค้าให้ปลอดภัย (กัน segments ไม่ใช่ array)
+// ✅ normalize แถวลูกค้าให้ปลอดภัย + normalize segment ให้เป็นตัวใหญ่เสมอ
 function normalizeCustomerRow(x: any): CustomerRow {
+  const segRaw = Array.isArray(x?.segments) ? x.segments : [];
+  const segs = segRaw
+    .map((s: any) => String(s || "").trim().toUpperCase())
+    .filter(Boolean);
+
+  // ✅ อนุญาตเฉพาะ segment ที่เรารู้จัก
+  const allowed = new Set<Segment>(["BUYER", "SELLER", "CONSIGNOR", "DEPOSITOR"]);
+  const segments = segs.filter((s: string) => allowed.has(s as Segment)) as Segment[];
+
   return {
     id: Number(x?.id ?? 0),
     name: String(x?.name ?? ""),
@@ -31,14 +41,18 @@ function normalizeCustomerRow(x: any): CustomerRow {
     phone: x?.phone ?? null,
     lineId: x?.lineId ?? null,
     address: x?.address ?? null,
-    segments: Array.isArray(x?.segments) ? x.segments : [],
+    segments,
   };
 }
+
+const hasSeg = (r: CustomerRow, s: Segment) => (r.segments || []).includes(s);
+const isSellOrConsign = (r: CustomerRow) => hasSeg(r, "SELLER") || hasSeg(r, "CONSIGNOR");
 
 export default function CustomersPage() {
   const [rows, setRows] = useState<CustomerRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [q, setQ] = useState("");
+  // ✅ ใช้ SELLER เป็นแท็บ "มาขาย/ฝากขาย" (รวม SELLER+CONSIGNOR)
   const [tab, setTab] = useState<"ALL" | Segment>("ALL");
   const [err, setErr] = useState("");
 
@@ -47,7 +61,6 @@ export default function CustomersPage() {
       setErr("");
       setLoading(true);
 
-      // ✅ ยิงผ่าน api instance เท่านั้น
       const res = await api.get("/api/customers", {
         params: query ? { q: query } : undefined,
       });
@@ -72,15 +85,22 @@ export default function CustomersPage() {
 
   const counts = useMemo(() => {
     const all = safeRows.length;
-    const buyer = safeRows.filter((r) => r.segments.includes("BUYER")).length;
-    const consignor = safeRows.filter((r) => r.segments.includes("CONSIGNOR")).length;
-    const depositor = safeRows.filter((r) => r.segments.includes("DEPOSITOR")).length;
-    return { all, buyer, consignor, depositor };
+    const buyer = safeRows.filter((r) => hasSeg(r, "BUYER")).length;
+    const depositor = safeRows.filter((r) => hasSeg(r, "DEPOSITOR")).length;
+
+    // ✅ “มาขาย/ฝากขาย” รวมทั้ง SELLER และ CONSIGNOR
+    const sellOrConsign = safeRows.filter((r) => isSellOrConsign(r)).length;
+
+    return { all, buyer, sellOrConsign, depositor };
   }, [safeRows]);
 
   const filtered = useMemo(() => {
     if (tab === "ALL") return safeRows;
-    return safeRows.filter((r) => r.segments.includes(tab));
+
+    // ✅ ถ้าเลือกแท็บ SELLER ให้แสดงทั้ง SELLER + CONSIGNOR (เพราะปุ่มเขียนว่า "มาขาย/ฝากขาย")
+    if (tab === "SELLER") return safeRows.filter((r) => isSellOrConsign(r));
+
+    return safeRows.filter((r) => hasSeg(r, tab));
   }, [safeRows, tab]);
 
   const onSearch = async (e: React.FormEvent) => {
@@ -102,10 +122,7 @@ export default function CustomersPage() {
             placeholder="ค้นหา: ชื่อ / โทร / เลขบัตร / LINE"
             className="w-full rounded border px-3 py-2"
           />
-          <button
-            className="rounded bg-slate-900 px-4 py-2 text-white"
-            disabled={loading}
-          >
+          <button className="rounded bg-slate-900 px-4 py-2 text-white" disabled={loading}>
             {loading ? "กำลังค้นหา..." : "ค้นหา"}
           </button>
         </form>
@@ -120,6 +137,7 @@ export default function CustomersPage() {
           >
             ทั้งหมด ({counts.all})
           </button>
+
           <button
             type="button"
             onClick={() => setTab("BUYER")}
@@ -129,15 +147,18 @@ export default function CustomersPage() {
           >
             ลูกค้ามาซื้อ ({counts.buyer})
           </button>
+
+          {/* ✅ ปุ่มนี้รวม SELLER + CONSIGNOR */}
           <button
             type="button"
-            onClick={() => setTab("CONSIGNOR")}
+            onClick={() => setTab("SELLER")}
             className={`rounded px-3 py-2 text-sm shadow ${
-              tab === "CONSIGNOR" ? "bg-slate-900 text-white" : "bg-white"
+              tab === "SELLER" ? "bg-slate-900 text-white" : "bg-white"
             }`}
           >
-            ลูกค้ามาขาย/ฝากขาย ({counts.consignor})
+            ลูกค้ามาขาย/ฝากขาย ({counts.sellOrConsign})
           </button>
+
           <button
             type="button"
             onClick={() => setTab("DEPOSITOR")}
@@ -179,22 +200,32 @@ export default function CustomersPage() {
                     <td className="px-4 py-3">{maskIdCard(r.idCard)}</td>
                     <td className="px-4 py-3">
                       <div className="flex flex-wrap gap-2">
-                        {r.segments.includes("BUYER") ? (
+                        {hasSeg(r, "BUYER") ? (
                           <span className="rounded bg-emerald-50 px-2 py-1 text-xs text-emerald-700">
                             มาซื้อ
                           </span>
                         ) : null}
-                        {r.segments.includes("CONSIGNOR") ? (
-                          <span className="rounded bg-amber-50 px-2 py-1 text-xs text-amber-700">
-                            ขาย/ฝากขาย
+
+                        {/* ✅ แยก SELLER กับ CONSIGNOR ให้ชัด */}
+                        {hasSeg(r, "SELLER") ? (
+                          <span className="rounded bg-orange-50 px-2 py-1 text-xs text-orange-700">
+                            มาขาย
                           </span>
                         ) : null}
-                        {r.segments.includes("DEPOSITOR") ? (
+
+                        {hasSeg(r, "CONSIGNOR") ? (
+                          <span className="rounded bg-amber-50 px-2 py-1 text-xs text-amber-700">
+                            ฝากขาย
+                          </span>
+                        ) : null}
+
+                        {hasSeg(r, "DEPOSITOR") ? (
                           <span className="rounded bg-sky-50 px-2 py-1 text-xs text-sky-700">
                             ฝากดูแล
                           </span>
                         ) : null}
-                        {r.segments.length === 0 ? (
+
+                        {(!r.segments || r.segments.length === 0) ? (
                           <span className="rounded bg-slate-100 px-2 py-1 text-xs text-slate-600">
                             ยังไม่จัดกลุ่ม
                           </span>
@@ -225,7 +256,7 @@ export default function CustomersPage() {
         </div>
 
         <div className="mt-3 text-xs text-slate-500">
-          หมายเหตุ: กลุ่ม “ขาย/ฝากขาย” จะขึ้นเมื่อระบบมีข้อมูล consignment หรือ inventory source ที่ผูกกับลูกค้า
+          หมายเหตุ: “มาขาย” จะขึ้นเมื่อ backend ส่ง segment = SELLER (เช่น inventoryItem ผูก sellerCustomerId แล้ว)
         </div>
       </div>
     </div>
