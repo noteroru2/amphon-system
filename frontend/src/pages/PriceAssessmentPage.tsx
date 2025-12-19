@@ -77,12 +77,12 @@ function getPolicy(condition: ConditionKey, accessories: AccessoriesKey) {
 }
 
 function normalizeAiResponse(raw: any): AiPriceResult {
-  // รองรับ backend ส่ง { ok, data } หรือส่ง object ตรง ๆ
-  const d = raw?.data ?? raw;
-  if (d?.ok === false) {
-    throw new Error(d?.message || "AI response not ok");
+  // backend ส่ง { ok, data } เป็นหลัก
+  if (raw?.ok === false) {
+    throw new Error(raw?.message || "AI response not ok");
   }
-  const x = d?.data ?? d;
+
+  const x = raw?.data ?? raw;
 
   return {
     appraisedMin: Number(x?.appraisedMin ?? 0),
@@ -104,6 +104,7 @@ function normalizeAiResponse(raw: any): AiPriceResult {
       : undefined,
   };
 }
+
 
 export default function PriceAssessmentPage() {
   const [modelText, setModelText] = useState("โน๊ตบุค asus tuf i5-10300h gtx1650");

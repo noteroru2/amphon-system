@@ -76,7 +76,6 @@ function tokenizeName(name) {
     .trim();
 
   if (!raw) return [];
-  // ตัดคำสั้นๆ ออก, จำกัดจำนวน token เพื่อไม่ให้ query หนัก
   const tokens = raw
     .split(" ")
     .map((t) => t.trim())
@@ -86,18 +85,12 @@ function tokenizeName(name) {
   return tokens;
 }
 
-/**
- * ดึงของคล้ายในระบบ:
- * - ใช้ OR contains หลาย token
- * - เอา recent ก่อน
- */
 async function findSimilarInventoryItemsByName(name) {
   const q = String(name || "").trim();
   if (!q) return [];
 
   const tokens = tokenizeName(q);
 
-  // ถ้าไม่มี token (เช่น input แปลก) ใช้วิธีเดิมแบบสั้นๆ
   const where =
     tokens.length > 0
       ? {
@@ -128,7 +121,7 @@ async function findSimilarInventoryItemsByName(name) {
 }
 
 function buildInternalPriceStats(items) {
-  // ใช้ sellingPrice เป็นฐานก่อน ถ้ามี
+  // sellingPrice / targetPrice / cost ในระบบของคุณ "ควรเป็นต่อชิ้น" (per-unit)
   const solds = items.map((x) => num(x.sellingPrice)).filter((x) => x > 0);
   const targets = items.map((x) => num(x.targetPrice)).filter((x) => x > 0);
   const costs = items.map((x) => num(x.cost)).filter((x) => x > 0);
@@ -140,7 +133,6 @@ function buildInternalPriceStats(items) {
   let floor = med ? med * 0.9 : 0;
   let ceil = med ? med * 1.1 : 0;
 
-  // กันต่ำกว่าทุน (ถ้ามีทุน)
   if (costMed > 0) floor = Math.max(floor, costMed * 1.05);
 
   if (!med) {
@@ -174,7 +166,7 @@ function buildFallbackPriceFromInternal(stats, marginPct = 10) {
       appraisedPrice,
       targetPrice,
       confidence: 35,
-      rationale: "ขณะนี้ AI ไม่พร้อมใช้งาน จึงประเมินจากราคาภายในระบบ (ของคล้ายในคลัง) เป็นหลัก",
+      rationale: "AI ไม่พร้อมใช้งาน จึงประเมินจากราคาภายในระบบ (ของคล้ายในคลัง) เป็นหลัก",
       fallback: true,
     };
   }
@@ -188,6 +180,38 @@ function buildFallbackPriceFromInternal(stats, marginPct = 10) {
     rationale: "AI ไม่พร้อมใช้งาน และไม่มีข้อมูลสินค้าคล้ายในระบบเพียงพอ จึงยังประเมินราคาไม่ได้",
     fallback: true,
   };
+}
+
+/* -------------------- OCR validate helpers -------------------- */
+function onlyDigits(s) {
+  return String(s || "").replace(/\D/g, "");
+}
+
+function isValidThaiID(id13) {
+  const id = onlyDigits(id13);
+  if (!/^\d{13}$/.test(id)) return false;
+
+  let sum = 0;
+  for (let i = 0; i < 12; i++) {
+    sum += parseInt(id[i], 10) * (13 - i);
+  }
+  const checkDigit = (11 - (sum % 11)) % 10;
+  return checkDigit === parseInt(id[12], 10);
+}
+
+function normalizeThaiName(name) {
+  const s = String(name || "")
+    .replace(/\(.*?\)/g, " ") // ตัด (mock) / ข้อความในวงเล็บ
+    .replace(/(นาย|นางสาว|น\.ส\.|นาง)\s*/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  return s;
+}
+
+function normalizeThaiAddress(addr) {
+  return String(addr || "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 /* =========================================================
@@ -214,33 +238,47 @@ router.post("/ocr-idcard", async (req, res) => {
       if (m && m[1]) mimeType = m[1];
     }
 
+    // ✅ คุม mock ด้วย ENV เท่านั้น (กัน “เผลอ” ใช้ mock ใน production)
+    const allowMock = String(process.env.OCR_ALLOW_MOCK || "").toLowerCase() === "true";
     if (!process.env.GEMINI_API_KEY) {
-      console.warn("GEMINI_API_KEY not set. Returning mock OCR result.");
+      if (!allowMock) {
+        return res.status(503).json({
+          ok: false,
+          message: "OCR ยังไม่พร้อมใช้งาน (GEMINI_API_KEY ไม่ถูกตั้งค่า)",
+        });
+      }
+
       return res.json({
         ok: true,
+        valid: true,
         data: {
-          name: "อำพล พวงสุข (mock)",
+          name: "อำพล พวงสุข",
           idCard: "1349900900681",
           address: "ที่อยู่จาก mock address",
         },
+        confidence: { idCard: 0.99, name: 0.9, address: 0.7 },
+        mock: true,
       });
     }
 
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
     const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash" });
 
+    // ✅ ปรับ prompt: “ห้ามเดาเลขบัตร” และ “ถ้าไม่ชัวร์ให้เว้นว่าง”
     const prompt = `
-คุณได้รับรูปบัตรประชาชนไทยเป็นภาพ ให้คุณอ่านข้อความบนบัตร
-แล้วตอบกลับในรูปแบบ JSON เท่านั้น (ห้ามมีข้อความอื่นนอกจาก JSON) ในรูปแบบ:
+คุณได้รับรูปบัตรประชาชนไทยเป็นภาพ ให้คุณอ่านข้อความบนบัตร แล้วตอบกลับเป็น JSON เท่านั้น (ห้ามมีข้อความอื่น)
+รูปแบบ:
 {
   "name": "ชื่อ นามสกุล",
   "idCard": "เลขประจำตัวประชาชน 13 หลัก ไม่มีขีด",
-  "address": "ที่อยู่เต็มตามบัตร หรือที่อยู่ใกล้เคียงที่สุด"
+  "address": "ที่อยู่"
 }
-ข้อกำหนด:
-- ถ้าอ่านไม่ชัด ให้เดาค่าที่เป็นไปได้มากที่สุด
-- ห้ามใส่ null หรือปล่อยค่าว่างในทั้ง 3 field
-- ตอบกลับเป็น JSON เพียว ๆ ไม่ต้องมีคำอธิบายเพิ่มเติม
+
+กติกาสำคัญ:
+- ห้ามเดาเลขบัตรประชาชน: ถ้าอ่านไม่ชัด ให้ใส่ "" (ค่าว่าง)
+- ชื่อ/ที่อยู่ ถ้าไม่ชัดให้ใส่ "" ได้
+- ห้ามใส่ null
+- ตอบกลับเป็น JSON เพียว ๆ เท่านั้น
 `.trim();
 
     const imagePart = { inlineData: { data: base64, mimeType } };
@@ -249,11 +287,42 @@ router.post("/ocr-idcard", async (req, res) => {
     const text = (result.response.text() || "").trim();
     const parsed = safeJsonParse(text);
 
-    const name = String(parsed.name || "").trim() || "-";
-    const idCard = String(parsed.idCard || "").replace(/\D/g, "").slice(0, 13) || "-";
-    const address = String(parsed.address || "").trim() || "-";
+    const nameRaw = String(parsed?.name || "");
+    const idCardRaw = String(parsed?.idCard || "");
+    const addressRaw = String(parsed?.address || "");
 
-    return res.json({ ok: true, data: { name, idCard, address } });
+    const name = normalizeThaiName(nameRaw);
+    const idCard = onlyDigits(idCardRaw).slice(0, 13);
+    const address = normalizeThaiAddress(addressRaw);
+
+    // ✅ validate เลขบัตรก่อน “ยอมรับ”
+    const idOk = isValidThaiID(idCard);
+
+    if (!idOk) {
+      return res.json({
+        ok: true,
+        valid: false,
+        error: "ไม่สามารถยืนยันเลขบัตรประชาชนได้ กรุณาถ่ายใหม่ (ให้เห็นเลข 13 หลักชัด ๆ)",
+        data: {
+          name: name || "",
+          idCard: "", // ไม่ปล่อยเลขที่ไม่ผ่าน
+          address: address || "",
+        },
+        confidence: { idCard: 0.0, name: name ? 0.6 : 0.0, address: address ? 0.5 : 0.0 },
+      });
+    }
+
+    // name/address อาจว่างได้ แต่ idCard ผ่านแล้วถือว่า usable
+    return res.json({
+      ok: true,
+      valid: true,
+      data: {
+        name: name || "",
+        idCard,
+        address: address || "",
+      },
+      confidence: { idCard: 0.99, name: name ? 0.85 : 0.4, address: address ? 0.75 : 0.35 },
+    });
   } catch (err) {
     console.error("POST /api/ai/ocr-idcard error:", err);
     return res.status(500).json({ ok: false, message: "ไม่สามารถทำ OCR ได้", error: err?.message || String(err) });
@@ -274,7 +343,6 @@ router.post("/price-suggest", async (req, res) => {
 
     const margin = Number.isFinite(Number(desiredMarginPct)) ? Number(desiredMarginPct) : 10;
 
-    // ---- internal references ----
     const similarItems = await findSimilarInventoryItemsByName(name);
     const stats = buildInternalPriceStats(similarItems);
 
@@ -288,7 +356,6 @@ router.post("/price-suggest", async (req, res) => {
       createdAt: x.createdAt,
     }));
 
-    // ถ้าไม่มี key -> fallback จาก internal stats
     if (!process.env.GEMINI_API_KEY) {
       const fb = buildFallbackPriceFromInternal(stats, margin);
       return res.json({ ok: true, data: { ...fb, refs, stats } });
@@ -310,6 +377,8 @@ router.post("/price-suggest", async (req, res) => {
         recommendedMarginPct: margin,
         constraint: "If floor/ceiling exist, keep appraisedPrice within them",
         ifNoInternalData: "use wide range and confidence <= 40",
+        // ✅ บังคับให้ยึดข้อมูลภายในก่อน
+        priority: "Prefer internalMarket examples/median; only adjust by condition/accessories if provided",
       },
     };
 
@@ -332,6 +401,7 @@ ${JSON.stringify(ctx)}
 
 กติกา:
 - ถ้ามี recommendedFloor/recommendedCeiling ให้ appraisedPrice อยู่ในช่วงนั้น
+- ถ้ามีตัวอย่างภายใน (examples) ให้ยึด medianPrice เป็นฐานก่อนเสมอ
 - targetPrice ต้อง >= appraisedPrice และควรเผื่อกำไรตาม recommendedMarginPct
 - ถ้าข้อมูลภายในไม่พอ ให้ confidence <= 40 และช่วง min/max กว้างขึ้น
 - rationale เป็นภาษาไทย สั้น กระชับ และอ้างอิงข้อมูลภายในเมื่อทำได้
@@ -367,7 +437,6 @@ ${JSON.stringify(ctx)}
       }
     }
 
-    // ---- normalize + enforce constraints ----
     let appraisedMin = num(parsed.appraisedMin);
     let appraisedMax = num(parsed.appraisedMax);
     let appraisedPrice = num(parsed.appraisedPrice);
@@ -389,7 +458,6 @@ ${JSON.stringify(ctx)}
 
     if (targetPrice < appraisedPrice) targetPrice = appraisedPrice * (1 + margin / 100);
 
-    // ปัดบาท
     appraisedMin = Math.round(appraisedMin);
     appraisedMax = Math.round(appraisedMax);
     appraisedPrice = Math.round(appraisedPrice);
