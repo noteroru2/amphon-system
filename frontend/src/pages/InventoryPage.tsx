@@ -1,6 +1,6 @@
 // src/pages/InventoryPage.tsx
 import React, { useEffect, useMemo, useState, ChangeEvent } from "react";
-import axios from "axios";
+import { api } from "../lib/api";
 import { useNavigate } from "react-router-dom";
 import { arrayFromApi } from "../lib/arrayFromApi";
 
@@ -23,8 +23,8 @@ type TabKey = "ALL" | "READY" | "SOLD";
 
 // ✅ API base (prod ต้องชี้ไป backend)
 const API_BASE =
-  (import.meta as any).env?.VITE_API_URL?.replace(/\/+$/, "") ||
-  "https://amphon-backend.onrender.com";
+  (import.meta as any).env?.VITE_API_BASE__URL?.replace(/\/+$/, "") ||
+  "https://api.amphontd.com";
 
 // ✅ normalize status ฝั่งหน้า (กันกรณี backend ส่ง status ไม่สอดคล้องกับ qty)
 const normalizeRowStatus = (it: InventoryItemRow) => {
@@ -70,7 +70,7 @@ const InventoryPage: React.FC = () => {
       // ✅ ยิงไป backend render ตรง ๆ (กันไปโดเมน vercel เอง)
       // ✅ ใส่ t= กัน cache 304
       const url = `${API_BASE}/api/inventory?t=${Date.now()}`;
-      const res = await axios.get(url,);
+      const res = await api.get("/api/inventory");
 
       const list = arrayFromApi<InventoryItemRow>(res.data);
       setItems(Array.isArray(list) ? list : []);

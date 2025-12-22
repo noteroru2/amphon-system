@@ -43,21 +43,12 @@ import ApiTestPage from "./pages/ApiTestPage";
 
 export type UserRole = "ADMIN" | "STAFF" | null;
 
-function ProtectedRoute({
-  role,
-  children,
-}: {
-  role: UserRole;
-  children: JSX.Element;
-}) {
-  if (!role) return <Navigate to="/login" replace />;
-  return children;
-}
+const ROLE_KEY = "amphon_role";
 
 export default function App() {
   const [role, setRole] = useState<UserRole>(() => {
     if (typeof window === "undefined") return null;
-    const stored = localStorage.getItem("amphon_role");
+    const stored = localStorage.getItem(ROLE_KEY);
     if (stored === "ADMIN" || stored === "STAFF") return stored;
     return null;
   });
@@ -66,25 +57,44 @@ export default function App() {
     <Routes>
       {/* login */}
       <Route path="/" element={<Navigate to="/login" replace />} />
-      <Route path="/login" element={<LoginPage onLoggedIn={setRole} />} />
+      <Route
+        path="/login"
+        element={
+          <LoginPage
+            onLoggedIn={(r) => {
+              localStorage.setItem(ROLE_KEY, r);
+              setRole(r);
+            }}
+          />
+        }
+      />
 
       {/* redirect legacy paths */}
-      <Route path="/customers/:id" element={<Navigate to="/app/customers/:id" replace />} />
-
-      {/* app */}
       <Route
-        path="/app"
+        path="/customers/:id"
+        element={<Navigate to="/app/customers/:id" replace />}
+      />
+
+      {/* ===== APP (private area) ===== */}
+      <Route
+        path="/app/*"
         element={
-          <ProtectedRoute role={role}>
+          role ? (
             <MainLayout role={role} />
-          </ProtectedRoute>
+          ) : (
+            <Navigate to="/login" replace />
+          )
         }
       >
-        {/* ⭐ index: แยกตาม role */}
+        {/* index */}
         <Route
           index
           element={
-            role === "ADMIN" ? <AdminDashboardPage /> : <EmployeeHomePage />
+            role === "ADMIN" ? (
+              <AdminDashboardPage />
+            ) : (
+              <EmployeeHomePage />
+            )
           }
         />
 
@@ -97,8 +107,14 @@ export default function App() {
         <Route path="contracts/:id" element={<ContractDetailPage />} />
         <Route path="contracts/:id/renew" element={<RenewContractPage />} />
         <Route path="contracts/:id/redeem" element={<RedeemContractPage />} />
-        <Route path="contracts/:id/cut-principal" element={<AdjustPrincipalPage />} />
-        <Route path="contracts/:id/forfeit" element={<ForfeitContractPage />} />
+        <Route
+          path="contracts/:id/cut-principal"
+          element={<AdjustPrincipalPage />}
+        />
+        <Route
+          path="contracts/:id/forfeit"
+          element={<ForfeitContractPage />}
+        />
 
         {/* ฝากขาย */}
         <Route path="consignments" element={<ConsignmentListPage />} />
@@ -108,7 +124,10 @@ export default function App() {
         {/* คลัง */}
         <Route path="inventory" element={<InventoryPage />} />
         <Route path="inventory/sell/:id" element={<InventorySellPage />} />
-        <Route path="inventory/bulk-sell" element={<InventoryBulkSellPage />} />
+        <Route
+          path="inventory/bulk-sell"
+          element={<InventoryBulkSellPage />}
+        />
         <Route path="intake/new" element={<NewIntakePage />} />
 
         {/* ลูกค้า */}
@@ -116,9 +135,14 @@ export default function App() {
         <Route path="price-check" element={<PriceAssessmentPage />} />
 
         {/* Admin */}
-        <Route path="admin/stats" element={<StatsReportPage />} />
-        <Route path="admin/customers" element={<CustomersPage />} />
-        <Route path="admin/cashbook" element={<CashbookPage />} />
+        {role === "ADMIN" && (
+          <>
+            <Route path="admin/dashboard" element={<AdminDashboardPage />} />
+            <Route path="admin/stats" element={<StatsReportPage />} />
+            <Route path="admin/customers" element={<CustomersPage />} />
+            <Route path="admin/cashbook" element={<CashbookPage />} />
+          </>
+        )}
       </Route>
 
       <Route path="/api-test" element={<ApiTestPage />} />
