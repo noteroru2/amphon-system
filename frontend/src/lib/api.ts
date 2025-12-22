@@ -1,18 +1,18 @@
 // frontend/src/lib/api.ts
 import axios, { AxiosRequestConfig } from "axios";
 
-
-
-// ตั้ง base URL จาก env (Vercel) หรือ fallback ไป backend ที่ Render
+// ตั้ง base URL จาก env (Vite) หรือ fallback ไปโดเมน API หลักของคุณ
 export const API_BASE_URL =
   (import.meta as any)?.env?.VITE_API_BASE_URL?.replace(/\/+$/, "") ||
   "https://api.amphontd.com";
 
-
-// ✅ axios instance (ใช้กับโค้ดที่ผมแก้ให้)
+// ✅ axios instance (ใช้กับโค้ดที่เรียก api.get/post)
 export const api = axios.create({
   baseURL: API_BASE_URL,
   withCredentials: false,
+  headers: {
+    "Content-Type": "application/json",
+  },
 });
 
 // ✅ ของเดิมในโปรเจกต์คุณ: apiFetch (กันไฟล์อื่นล่ม)
@@ -22,19 +22,23 @@ export async function apiFetch<T = any>(
 ): Promise<T> {
   const p = String(path || "");
 
-  // ✅ ทำให้ path เป็น /api/... เสมอ
+  // ทำให้ path เป็น /api/... เสมอ
   const normalizedPath = p.startsWith("/api/")
     ? p
     : p.startsWith("/")
-      ? `/api${p}`
-      : `/api/${p}`;
+    ? `/api${p}`
+    : `/api/${p}`;
 
   const url = `${API_BASE_URL}${normalizedPath}`;
+
+  // ถ้าเป็น FormData/อัปโหลดไฟล์ อย่าบังคับ Content-Type
+  const isFormData =
+    typeof FormData !== "undefined" && options.body instanceof FormData;
 
   const res = await fetch(url, {
     ...options,
     headers: {
-      "Content-Type": "application/json",
+      ...(isFormData ? {} : { "Content-Type": "application/json" }),
       ...(options.headers || {}),
     },
   });
@@ -57,8 +61,7 @@ export async function apiFetch<T = any>(
   return data as T;
 }
 
-
-// (optional) helper ถ้าบางไฟล์ใช้รูปแบบ config
+// helper ถ้าบางไฟล์ใช้รูปแบบ axios config
 export async function apiFetchWithConfig<T = any>(
   path: string,
   config?: AxiosRequestConfig
@@ -72,6 +75,7 @@ export async function apiFetchWithConfig<T = any>(
   });
   return r.data;
 }
+
 export function getApiErrorMessage(err: any) {
   return (
     err?.response?.data?.message ||
