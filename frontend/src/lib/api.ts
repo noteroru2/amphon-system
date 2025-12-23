@@ -1,12 +1,13 @@
 // frontend/src/lib/api.ts
 import axios, { AxiosRequestConfig } from "axios";
 
-const ENV = (import.meta as any)?.env || {};
+
 
 // ตั้ง base URL จาก env (Vercel) หรือ fallback ไป backend ที่ Render
 export const API_BASE_URL =
-  (ENV.VITE_API_BASE_URL || ENV.VITE_API_URL || "https://api.amphontd.com")
-    .replace(/\/+$/, "");
+  (import.meta as any)?.env?.VITE_API_BASE_URL?.replace(/\/+$/, "") ||
+  "https://api.amphontd.com";
+
 
 // ✅ axios instance (ใช้กับโค้ดที่ผมแก้ให้)
 export const api = axios.create({

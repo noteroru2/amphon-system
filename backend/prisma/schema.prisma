@@ -44,15 +44,15 @@ enum CashbookType {
 // -------- MODELS --------
 
 model Customer {
-  id        Int      @id @default(autoincrement())
-  name      String
-  idCard    String?  @unique
-  phone     String?
-  lineId    String?
-  lineToken String?
-  address   String?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id         Int      @id @default(autoincrement())
+  name       String
+  idCard     String?  @unique
+  phone      String?
+  lineId     String?
+  lineUserId String?  @unique // ⭐ ใช้ตัวนี้
+  address    String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 
   contracts Contract[]
 
@@ -60,6 +60,7 @@ model Customer {
   inventoryItemsSold   InventoryItem[] @relation("InventorySeller")
 
   consignmentContracts ConsignmentContract[] @relation("ConsignmentSeller")
+  lineNotifyLogs       LineNotifyLog[]
 }
 
 model Contract {
@@ -96,7 +97,8 @@ model Contract {
   inventoryItems  InventoryItem[] @relation("InventoryFromContract")
   cashbookEntries CashbookEntry[]
 
-  actionLogs ContractActionLog[]
+  actionLogs     ContractActionLog[]
+  lineNotifyLogs LineNotifyLog[]
 
   @@index([customerId])
   @@index([dueDate])
@@ -260,4 +262,24 @@ model PriceSuggestion {
   refs Json? // เช่นตัวอย่าง inventoryItem ที่คล้ายกัน
 
   createdAt DateTime @default(now())
+}
+
+model LineNotifyLog {
+  id            Int       @id @default(autoincrement())
+  customerId    Int
+  contractId    Int
+  rule          String // D-3, D-2, D-1, D0, OVERDUE+1
+  scheduledDate DateTime // ใช้เก็บเป็นวัน (00:00)
+  status        String // SENT | FAILED | SKIPPED
+  error         String?
+  sentAt        DateTime?
+
+  createdAt DateTime @default(now())
+
+  customer Customer @relation(fields: [customerId], references: [id])
+  contract Contract @relation(fields: [contractId], references: [id])
+
+  @@unique([customerId, contractId, rule, scheduledDate])
+  @@index([contractId])
+  @@index([scheduledDate])
 }

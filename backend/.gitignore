@@ -1,5 +1,20 @@
-node_modules
-# Keep environment variables out of version control
+# env
 .env
+.env.*
+!.env.example
 
-/src/generated/prisma
+# node
+node_modules/
+dist/
+build/
+
+# logs
+*.log
+
+# n8n data / local data
+.n8n/
+**/*.sqlite
+**/*.db
+
+# uploads (ถ้ามี)
+uploads/

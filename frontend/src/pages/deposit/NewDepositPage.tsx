@@ -16,7 +16,7 @@ type CustomerState = {
   phone: string;
   lineId: string;
   address: string;
-  lineToken: string;
+  lineUserId: string;
 };
 
 type AssetState = {
@@ -53,7 +53,7 @@ const NewDepositPage: React.FC = () => {
     phone: "",
     lineId: "",
     address: "",
-    lineToken: "",
+    lineUserId: "",
   });
 
   const [asset, setAsset] = useState<AssetState>({
@@ -342,8 +342,8 @@ const NewDepositPage: React.FC = () => {
               />
               <TextInput
                 label="LINE TOKEN / UID (สำหรับแจ้งเตือน)"
-                value={customer.lineToken}
-                onChange={(v) => setCustomer({ ...customer, lineToken: v })}
+                value={customer.lineUserId}
+                onChange={(v) => setCustomer({ ...customer, lineUserId: v })}
                 placeholder="สำหรับใช้งานแจ้งเตือนผ่าน LINE OA"
               />
             </div>
