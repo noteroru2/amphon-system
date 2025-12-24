@@ -239,7 +239,7 @@ function mapContractToResponse(contract) {
           idCard: contract.customer.idCard,
           address: contract.customer.address,
           lineId: contract.customer.lineId,
-          lineToken: contract.customer.lineToken,
+          lineUserId: contract.customer.lineUserId,
         }
       : null,
 
@@ -445,7 +445,7 @@ router.post("/", async (req, res) => {
           idCard: customer.idCard,
           address: customer.address || "",
           lineId: customer.lineId || "",
-          lineToken: customer.lineToken || "",
+          lineUserId: customer.lineUserId || "",
         },
       });
     } catch (err) {
@@ -464,7 +464,7 @@ router.post("/", async (req, res) => {
             phone: customer.phone || undefined,
             address: customer.address || undefined,
             lineId: customer.lineId || undefined,
-            lineToken: customer.lineToken || undefined,
+            lineUserId: customer.lineUserId || undefined,
           },
         });
       } else {

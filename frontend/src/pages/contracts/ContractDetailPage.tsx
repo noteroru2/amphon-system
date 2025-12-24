@@ -18,7 +18,7 @@ type Customer = {
   idCard?: string;
   address?: string;
   lineId?: string;
-  lineToken?: string;
+  lineUserId?: string;
 };
 
 type Asset = {
@@ -190,7 +190,7 @@ export function ContractDetailPage() {
       idCard: contract.customer.idCard || "",
       address: contract.customer.address || "",
       lineId: contract.customer.lineId || "",
-      lineToken: contract.customer.lineToken || "",
+      lineUserId: contract.customer.lineUserId || "",
     });
     setIsEditingCustomer(true);
   };
@@ -210,7 +210,7 @@ export function ContractDetailPage() {
         idCard: editingCustomer.idCard || "",
         address: editingCustomer.address || "",
         lineId: editingCustomer.lineId || "",
-        lineToken: editingCustomer.lineToken || "",
+        lineUserId: editingCustomer.lineUserId || "",
       };
 
       // ✅ ใช้ apiFetch ยิงไป backend จริง
@@ -551,8 +551,8 @@ export function ContractDetailPage() {
                   />
                   <TextInputSmall
                     label="LINE TOKEN / UID"
-                    value={editingCustomer.lineToken || ""}
-                    onChange={(v) => setEditingCustomer({ ...editingCustomer, lineToken: v })}
+                    value={editingCustomer.lineUserId || ""}
+                    onChange={(v) => setEditingCustomer({ ...editingCustomer, lineUserId: v })}
                   />
 
                   <div className="mt-3 flex justify-end gap-2">

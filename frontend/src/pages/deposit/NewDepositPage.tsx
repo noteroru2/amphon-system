@@ -340,12 +340,7 @@ const NewDepositPage: React.FC = () => {
                 onChange={(v) => setCustomer({ ...customer, address: v })}
                 placeholder="ที่อยู่ตามที่สามารถติดต่อได้"
               />
-              <TextInput
-                label="LINE TOKEN / UID (สำหรับแจ้งเตือน)"
-                value={customer.lineUserId}
-                onChange={(v) => setCustomer({ ...customer, lineUserId: v })}
-                placeholder="สำหรับใช้งานแจ้งเตือนผ่าน LINE OA"
-              />
+              
             </div>
           </section>
 
