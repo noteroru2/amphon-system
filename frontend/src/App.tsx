@@ -147,7 +147,7 @@ export default function App() {
 
       <Route path="/api-test" element={<ApiTestPage />} />
       <Route path="*" element={<Navigate to="/login" replace />} />
-      <Route path="/line/register" element={<LineRegisterPage />} />
+      
 
     </Routes>
   );
