@@ -16,7 +16,7 @@ type CustomerState = {
   phone: string;
   lineId: string;
   address: string;
-  lineUserId: string;
+  
 };
 
 type AssetState = {
@@ -53,7 +53,7 @@ const NewDepositPage: React.FC = () => {
     phone: "",
     lineId: "",
     address: "",
-    lineUserId: "",
+   
   });
 
   const [asset, setAsset] = useState<AssetState>({
