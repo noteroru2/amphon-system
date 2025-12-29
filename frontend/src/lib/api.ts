@@ -1,12 +1,42 @@
 // frontend/src/lib/api.ts
 import axios, { AxiosRequestConfig } from "axios";
 
-// ตั้ง base URL จาก env (Vite) หรือ fallback ไปโดเมน API หลักของคุณ
-export const API_BASE_URL =
-  (import.meta as any)?.env?.VITE_API_BASE_URL?.replace(/\/+$/, "") ||
-  "https://api.amphontd.com";
+/**
+ * ✅ วิธีอ่าน env ที่ถูกต้องใน Vite
+ * - ต้องมี prefix: VITE_
+ * - ต้อง restart dev server ทุกครั้งหลังแก้ .env*
+ */
+const RAW_BASE =
+  (import.meta.env.VITE_API_BASE_URL || "").toString().trim();
 
-// ✅ axios instance (ใช้กับโค้ดที่เรียก api.get/post)
+// ตัด / ท้าย ๆ ออก
+const normalizeBase = (s: string) => s.replace(/\/+$/, "");
+
+/**
+ * ✅ โหมด dev: ถ้าไม่ได้ตั้ง VITE_API_BASE_URL ให้ใช้ local เป็น default (กันหลุดไป prod)
+ * ✅ โหมด prod: ถ้าไม่ได้ตั้ง ให้ fallback ไปโดเมนจริง
+ */
+export const API_BASE_URL = (() => {
+  if (RAW_BASE) return normalizeBase(RAW_BASE);
+
+  const isDev = import.meta.env.DEV;
+  if (isDev) return "http://localhost:4000"; // หรือพอร์ต backend local ของคุณ
+  return "https://api.amphontd.com";
+})();
+
+/**
+ * ✅ เปิด debug ได้ด้วย VITE_API_DEBUG=true
+ * (ใส่ใน .env.local)
+ */
+const API_DEBUG = String(import.meta.env.VITE_API_DEBUG || "") === "true";
+if (API_DEBUG) {
+  // eslint-disable-next-line no-console
+  console.log("[api.ts] VITE_API_BASE_URL =", RAW_BASE || "(empty)");
+  // eslint-disable-next-line no-console
+  console.log("[api.ts] API_BASE_URL =", API_BASE_URL);
+}
+
+// ✅ axios instance
 export const api = axios.create({
   baseURL: API_BASE_URL,
   withCredentials: false,
@@ -15,7 +45,7 @@ export const api = axios.create({
   },
 });
 
-// ✅ ของเดิมในโปรเจกต์คุณ: apiFetch (กันไฟล์อื่นล่ม)
+// ✅ fetch wrapper (ของเดิม)
 export async function apiFetch<T = any>(
   path: string,
   options: RequestInit = {}
@@ -31,7 +61,11 @@ export async function apiFetch<T = any>(
 
   const url = `${API_BASE_URL}${normalizedPath}`;
 
-  // ถ้าเป็น FormData/อัปโหลดไฟล์ อย่าบังคับ Content-Type
+  if (API_DEBUG) {
+    // eslint-disable-next-line no-console
+    console.log("[apiFetch]", options?.method || "GET", url);
+  }
+
   const isFormData =
     typeof FormData !== "undefined" && options.body instanceof FormData;
 
@@ -45,6 +79,7 @@ export async function apiFetch<T = any>(
 
   const text = await res.text();
   let data: any = null;
+
   try {
     data = text ? JSON.parse(text) : null;
   } catch {
@@ -61,7 +96,7 @@ export async function apiFetch<T = any>(
   return data as T;
 }
 
-// helper ถ้าบางไฟล์ใช้รูปแบบ axios config
+// ✅ axios config helper
 export async function apiFetchWithConfig<T = any>(
   path: string,
   config?: AxiosRequestConfig

@@ -20,6 +20,7 @@ const adminItems = [
   { to: `${APP_PREFIX}/admin/stats`, label: "สรุปยอด/การเงิน" },
   { to: `${APP_PREFIX}/admin/customers`, label: "รายชื่อลูกค้า" },
   { to: `${APP_PREFIX}/admin/cashbook`, label: "บัญชีการเงิน" },
+  { to: `${APP_PREFIX}/admin/contracts/import`, label: "นำเข้า Excel (สัญญาฝากดูแล)" },
 ];
 
 /* ===== COMPONENT ===== */

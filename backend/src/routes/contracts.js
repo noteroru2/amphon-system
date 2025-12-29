@@ -475,7 +475,10 @@ router.post("/", async (req, res) => {
     // ---------- 2) เตรียมข้อมูลสัญญา ----------
     const now = new Date();
 
-    const termDays = financial?.termDays ?? 15;
+    const allowedTerms = [7, 15, 30];
+  const termDaysRaw = Number(financial?.termDays ?? 15);
+  const termDays = allowedTerms.includes(termDaysRaw) ? termDaysRaw : 15;
+
     const principal = Number(financial?.principal ?? 0) || 0;
 
     const feeBreakdown =

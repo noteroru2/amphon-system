@@ -1,68 +1,64 @@
-import { FeeBreakdown } from '../types';
+import { FeeBreakdown } from "../types";
 
 /**
  * คำนวณค่าฝากดูแลจาก "เรทรายวัน"
  *
- * เป้า:
- *  - 15 วัน ≈ 7.5% ของเงินฝาก (0.5% ต่อวัน)
- *  - 30 วัน ≈ 15% ของเงินฝาก
- * 
- * ขั้นตอน:
- *  1) คำนวณค่าใช้จ่ายรวมจากเรท 0.5% ต่อวัน
- *  2) ปัดขึ้นเป็นจำนวนเต็มที่ลงท้ายด้วย 0 (เช่น 741 -> 750)
- *  3) แบ่งเป็น docFee (คงรูปแบบเดิม) + storageFee + careFee (60/40)
+ * เงื่อนไขพิเศษ:
+ *  - 7 วัน = (ค่าของ 15 วัน) / 2  ✅ ตามที่คุณต้องการ
  */
-export const calculateFee = (
-  depositAmount: number,
-  days: number = 15
-): FeeBreakdown => {
-  // กันค่าผิดปกติ
+export const calculateFee = (depositAmount: number, days: number = 15): FeeBreakdown => {
   const amount = Math.max(depositAmount || 0, 0);
   const termDays = Math.max(days || 0, 1);
 
-  // 1) เรทรายวัน 0.5% = 0.005
-  const dailyRate = 0.005;
-  let rawTotal = amount * dailyRate * termDays;
+  // helper: ปัดขึ้นให้ลงท้ายด้วย 0
+  const ceilTo10 = (n: number) => Math.ceil(n / 10) * 10;
 
-  // 2) ปัดขึ้นให้ลงท้ายด้วย 0 บาท
-  //    เช่น 741 → 750, 748 → 750
-  let totalFee = Math.ceil(rawTotal / 10) * 10;
+  // helper: คำนวณแบบเดิม (0.5%/วัน + docFee + 60/40)
+  const calcByDailyRate = (a: number, d: number): FeeBreakdown => {
+    const dailyRate = 0.005;
+    let rawTotal = a * dailyRate * d;
 
-  // ถ้าเงินฝากน้อยมากและ totalFee ต่ำมาก บังคับขั้นต่ำซักหน่อยก็ได้ (optional)
-  // เช่น อย่างน้อย 50 บาท
-  if (totalFee < 50 && totalFee > 0) {
-    totalFee = 50;
-  }
+    let totalFee = ceilTo10(rawTotal);
 
-  // 3) แบ่งเป็น docFee / storageFee / careFee
-  //    คุณอาจจะยังอยากให้ docFee fix ตามช่วงวงเงินเหมือนเดิมก็ได้
-  let docFee = 0;
+    if (totalFee < 50 && totalFee > 0) totalFee = 50;
 
-  if (amount <= 1000) {
-    docFee = 50;
-  } else if (amount <= 5000) {
-    docFee = 100;
-  } else {
-    docFee = 200;
-  }
+    let docFee = 0;
+    if (a <= 1000) docFee = 50;
+    else if (a <= 5000) docFee = 100;
+    else docFee = 200;
 
-  // ถ้า totalFee น้อยกว่า docFee ให้บังคับ docFee = totalFee
-  if (totalFee <= docFee) {
-    docFee = totalFee;
-  }
+    if (totalFee <= docFee) docFee = totalFee;
 
-  const remainder = Math.max(totalFee - docFee, 0);
+    const remainder = Math.max(totalFee - docFee, 0);
+    const storageFee = Math.floor(remainder * 0.6);
+    const careFee = remainder - storageFee;
 
-  // แบ่งที่เหลือ 60/40 แบบเดิม
-  const storageFee = Math.floor(remainder * 0.6);
-  const careFee = remainder - storageFee;
-
-  const breakdown: FeeBreakdown = {
-    docFee,
-    storageFee,
-    careFee,
-    total: totalFee,
+    return { docFee, storageFee, careFee, total: totalFee };
   };
 
-  return breakdown;
+  // ✅ เงื่อนไขพิเศษ: 7 วัน = 15 วัน / 2
+  if (termDays === 7) {
+    const fee15 = calcByDailyRate(amount, 15);
+
+    // หาร 2 และปัดขึ้นเป็น 10 บาท เพื่อคงรูปแบบเดิม
+    const halfTotal = ceilTo10(fee15.total / 2);
+
+    // สร้าง breakdown ใหม่แบบสัดส่วนเดิมจาก total ที่ได้
+    // (ยังคง docFee ตามช่วงวงเงิน แต่ต้องไม่เกิน total)
+    let docFee = 0;
+    if (amount <= 1000) docFee = 50;
+    else if (amount <= 5000) docFee = 100;
+    else docFee = 200;
+
+    if (halfTotal <= docFee) docFee = halfTotal;
+
+    const remainder = Math.max(halfTotal - docFee, 0);
+    const storageFee = Math.floor(remainder * 0.6);
+    const careFee = remainder - storageFee;
+
+    return { docFee, storageFee, careFee, total: halfTotal };
+  }
+
+  // default: ใช้สูตรเดิม
+  return calcByDailyRate(amount, termDays);
 };

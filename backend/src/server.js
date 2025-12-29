@@ -11,6 +11,7 @@ import intakeRoutes from "./routes/intake.js";
 import consignmentsRouter from "./routes/consignments.js";
 import adminStatsRouter from "./routes/adminStats.js";
 import aiBusinessRouter from "./routes/aiBusiness.js";
+import adminImportContracts from "./routes/adminImportContracts.js";
 
 dotenv.config();
 
@@ -59,6 +60,7 @@ app.use("/api/intake", intakeRoutes);
 app.use("/api/consignments", consignmentsRouter);
 app.use("/api/admin/stats", adminStatsRouter);
 app.use("/api/ai/business", aiBusinessRouter);
+app.use("/api", adminImportContracts);
 
 app.use((req, res) => {
   res.status(404).json({ ok: false, message: "Not Found", path: req.path });

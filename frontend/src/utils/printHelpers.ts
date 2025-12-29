@@ -384,7 +384,7 @@ export const printContract = (contract: Contract) => {
 
             <div class="section-header">ข้อ 7. สรุปยอดรับสุทธิ</div>
             <div class="indent">
-              เงินประกันความเสียหาย (เงินต้น): <strong>${money(principal)} บาท</strong>
+              เงินประกันความเสียหาย : <strong>${money(principal)} บาท</strong>
               หักค่าบริการรวม: <strong>${money(fee.total)} บาท</strong><br>
               ลูกค้าได้รับเงินสุทธิ: <strong>${money(netReceive)} บาท</strong>
             </div>

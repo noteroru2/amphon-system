@@ -29,7 +29,7 @@ type AssetState = {
 
 type FinancialState = {
   principal: number;
-  termDays: 15 | 30;
+  termDays: 7| 15 | 30;
   feeBreakdown: FeeBreakdown;
   feeTotal: number;
   netReceive: number;
@@ -105,7 +105,7 @@ const NewDepositPage: React.FC = () => {
   }, []);
 
   // ---------- คิดค่าบริการ ----------
-  const recalcFinancial = (principal: number, termDays: 15 | 30) => {
+  const recalcFinancial = (principal: number, termDays: 7 | 15 | 30) => {
     const breakdown = calculateFee(principal, termDays);
     const feeTotal = breakdown.total;
     const netReceive = Math.max(principal - feeTotal, 0);
@@ -123,7 +123,7 @@ const NewDepositPage: React.FC = () => {
     recalcFinancial(value, financial.termDays);
   };
 
-  const handleTermChange = (days: 15 | 30) => {
+  const handleTermChange = (days: 7 | 15 | 30) => {
     recalcFinancial(financial.principal, days);
   };
 
@@ -441,25 +441,37 @@ const NewDepositPage: React.FC = () => {
 
               <div className="text-[11px] text-slate-300">ระยะเวลาฝาก (TERM)</div>
               <div className="flex gap-2 text-[11px]">
-                <button
-                  type="button"
-                  onClick={() => handleTermChange(15)}
-                  className={`flex-1 rounded-xl px-3 py-2 ${
-                    financial.termDays === 15 ? "bg-red-600 text-white" : "bg-slate-800 text-slate-200"
-                  }`}
-                >
-                  15 วัน
-                </button>
-                <button
-                  type="button"
-                  onClick={() => handleTermChange(30)}
-                  className={`flex-1 rounded-xl px-3 py-2 ${
-                    financial.termDays === 30 ? "bg-red-600 text-white" : "bg-slate-800 text-slate-200"
-                  }`}
-                >
-                  30 วัน (x2)
-                </button>
-              </div>
+  <button
+    type="button"
+    onClick={() => handleTermChange(7)}
+    className={`flex-1 rounded-xl px-3 py-2 ${
+      financial.termDays === 7 ? "bg-red-600 text-white" : "bg-slate-800 text-slate-200"
+    }`}
+  >
+    7 วัน
+  </button>
+
+  <button
+    type="button"
+    onClick={() => handleTermChange(15)}
+    className={`flex-1 rounded-xl px-3 py-2 ${
+      financial.termDays === 15 ? "bg-red-600 text-white" : "bg-slate-800 text-slate-200"
+    }`}
+  >
+    15 วัน
+  </button>
+
+  <button
+    type="button"
+    onClick={() => handleTermChange(30)}
+    className={`flex-1 rounded-xl px-3 py-2 ${
+      financial.termDays === 30 ? "bg-red-600 text-white" : "bg-slate-800 text-slate-200"
+    }`}
+  >
+    30 วัน (x2)
+  </button>
+</div>
+
 
               <div className="mt-2 rounded-xl bg-slate-800 p-3">
                 <div className="mb-1 text-[11px] font-semibold text-slate-200">
