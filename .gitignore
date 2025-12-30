@@ -18,3 +18,15 @@ build/
 
 # uploads (ถ้ามี)
 uploads/
+
+# frontend
+frontend/node_modules
+frontend/dist
+
+# backend
+backend/node_modules
+
+# general
+node_modules
+dist
+.env
