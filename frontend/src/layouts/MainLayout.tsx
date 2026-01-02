@@ -24,6 +24,10 @@ const adminItems = [
     to: `${APP_PREFIX}/admin/contracts/import`,
     label: "นำเข้า Excel (สัญญาฝากดูแล)",
   },
+  {
+    to: `${APP_PREFIX}/admin/price-history/import`,
+    label: "นำเข้า Excel (ประวัติซื้อขาย/ราคา)",
+  },
 ];
 
 /* ===== MENU LINK ===== */

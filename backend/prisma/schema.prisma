@@ -283,3 +283,34 @@ model LineNotifyLog {
   @@index([contractId])
   @@index([scheduledDate])
 }
+
+model PriceHistory {
+  id            Int      @id @default(autoincrement())
+
+  // ===== Raw จาก Excel =====
+  itemName      String            // รายการเต็มจาก Excel
+  buyPrice      Int               // ราคาซื้อเข้า
+  sellPrice     Int?              // ราคาขายออก
+  profit        Int?              // กำไร (sell - buy)
+
+  buyDate       DateTime          // วันที่ซื้อเข้า
+  sellDate      DateTime?         // วันที่ขายออก
+
+  note          String?           // บันทึก / หมายเหตุ
+  channel       String?           // หน้าร้าน / ออนไลน์ / พ่อค้า
+
+  // ===== Normalize เพื่อ AI =====
+  brand         String?           // Asus / Apple / Acer
+  model         String?           // Vivobook / iPad
+  cpu           String?
+  ram           String?
+  storage       String?
+  gpu           String?
+
+  // ===== Meta =====
+  source        String   @default("EXCEL_IMPORT") // ที่มา
+  createdAt     DateTime @default(now())
+
+  @@index([brand, model])
+  @@index([buyDate])
+}

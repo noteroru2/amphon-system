@@ -37,6 +37,8 @@ import StatsReportPage from "./pages/admin/StatsReportPage";
 import { CashbookPage } from "./pages/admin/CashbookPage";
 import AdminDashboardPage from "./pages/admin/DashboardPage";
 import AdminImportContractsPage from "./pages/admin/AdminImportContractsPage";
+import AdminImportPriceHistoryPage from "./pages/admin/AdminImportPriceHistoryPage";
+
 
 // อื่น ๆ
 import PriceAssessmentPage from "./pages/PriceAssessmentPage";
@@ -143,6 +145,7 @@ export default function App() {
             <Route path="admin/customers" element={<CustomersPage />} />
             <Route path="admin/cashbook" element={<CashbookPage />} />
             <Route path="admin/contracts/import" element={<AdminImportContractsPage />} />
+            <Route path="admin/price-history/import" element={<AdminImportPriceHistoryPage />} />
 
           </>
         )}

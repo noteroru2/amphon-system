@@ -198,9 +198,11 @@ export default function PriceAssessmentPage() {
       };
 
       // ✅ ยิงผ่าน api ของเรา (ชี้ไป backend Render/VPS)
-      const res = await api.post("/api/ai/price-suggest", payload, {
-        headers: { "Content-Type": "application/json" },
-      });
+      const res = await api.post("/api/price-check", payload, {
+  headers: { "Content-Type": "application/json" },
+});
+
+
 
       const normalized = normalizeAiResponse(res.data);
       setAi(normalized);

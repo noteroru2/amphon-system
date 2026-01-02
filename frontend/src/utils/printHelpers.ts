@@ -284,9 +284,63 @@ export const printContract = (contract: Contract) => {
         <title>สัญญาบริการรับฝาก - ${safeText(code)}</title>
         <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@300;400;500;600;700&display=swap" rel="stylesheet">
         <style>
-          ${COMMON_A4_CSS}
-          ${CONTRACT_FIT_ONE_PAGE_CSS}
-        </style>
+  ${COMMON_A4_CSS}
+  ${CONTRACT_FIT_ONE_PAGE_CSS}
+
+  /* ===== Detachable stub (tear-off) ===== */
+  .tear-line {
+    margin: 10px 0 8px 0;
+    border-top: 2px dashed #000;
+    position: relative;
+  }
+  .tear-line:before {
+    content: "✂  ส่วนฉีกให้ลูกค้าเก็บไว้ (Customer Copy)";
+    position: absolute;
+    top: -11px;
+    left: 0;
+    background: #fff;
+    padding: 0 8px;
+    font-size: 10.5px;
+  }
+
+  .stub {
+    border: 1px solid #000;
+    padding: 8px;
+    border-radius: 6px;
+  }
+  .stub-title {
+    font-size: 13px;
+    font-weight: 700;
+    text-align: center;
+    margin-bottom: 6px;
+  }
+  .stub-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px 10px;
+    font-size: 11px;
+  }
+  .stub-row { display:flex; gap:6px; }
+  .stub-label { min-width: 92px; color:#111; font-weight:700; }
+  .stub-value { color:#111; }
+  .stub-note { margin-top: 6px; font-size: 10px; color:#333; }
+  .stub-sign {
+    margin-top: 8px;
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    font-size: 11px;
+  }
+  .stub-sign .line {
+    width: 48%;
+    text-align: center;
+  }
+  .stub-sign .line .sig {
+    border-bottom: 1px dotted #000;
+    margin: 18px 0 6px 0;
+  }
+</style>
+
       </head>
       <body>
         <div class="page">
@@ -407,6 +461,65 @@ export const printContract = (contract: Contract) => {
             </div>
           </div>
         </div>
+        
+        <div class="tear-line"></div>
+
+<div class="stub no-break">
+  <div class="stub-title">ใบรับฝากและดูแลรักษาทรัพย์สิน (สำหรับลูกค้าเก็บไว้)</div>
+
+  <div class="stub-grid">
+    <div class="stub-row">
+      <div class="stub-label">เลขที่สัญญา:</div>
+      <div class="stub-value">${safeText(code)}</div>
+    </div>
+    <div class="stub-row">
+      <div class="stub-label">วันที่เริ่มฝาก:</div>
+      <div class="stub-value">${start.toLocaleDateString("th-TH")}</div>
+    </div>
+
+    <div class="stub-row">
+      <div class="stub-label">ครบกำหนด:</div>
+      <div class="stub-value"><strong>${due.toLocaleDateString("th-TH")}</strong></div>
+    </div>
+    <div class="stub-row">
+      <div class="stub-label">ระยะเวลา:</div>
+      <div class="stub-value">${termDays} วัน</div>
+    </div>
+
+    <div class="stub-row" style="grid-column: 1 / span 2;">
+      <div class="stub-label">ผู้ฝาก:</div>
+      <div class="stub-value">
+        คุณ ${safeText(customer.name)} | โทร ${safeText(customer.phone)}
+      </div>
+    </div>
+
+    <div class="stub-row" style="grid-column: 1 / span 2;">
+      <div class="stub-label">ทรัพย์สิน:</div>
+      <div class="stub-value">
+        ${safeText(asset.title)} | SN/IMEI: ${safeText(asset.serial)} | ช่องเก็บ: ${safeText(asset.storageCode)}
+      </div>
+    </div>
+
+    <div class="stub-row">
+      <div class="stub-label">เงินประกันความเสียหาย:</div>
+      <div class="stub-value"><strong>${money(principal)} บาท</strong></div>
+    </div>
+    <div class="stub-row">
+      <div class="stub-label">ค่าบริการ:</div>
+      <div class="stub-value">-${money(fee.total)} บาท</div>
+    </div>
+
+    
+  </div>
+
+  <div class="stub-note">
+    *กรุณาเก็บใบนี้ไว้เพื่อนำมาแสดงตอนรับคืนทรัพย์สิน (แนะนำถ่ายรูปเก็บไว้ด้วย)
+    <br/>
+    โทร: ${SHOP_INFO.phone}
+  </div>
+
+ 
+</div>
 
         <script>
           window.onload = () => { window.print(); }
