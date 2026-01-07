@@ -86,6 +86,50 @@ const NewDepositPage: React.FC = () => {
   const [scanLoading, setScanLoading] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
 
+  async function compressImage(
+  file: File,
+  opts?: { maxWidth?: number; maxHeight?: number; quality?: number; mimeType?: string }
+): Promise<File> {
+  const maxWidth = opts?.maxWidth ?? 1280;
+  const maxHeight = opts?.maxHeight ?? 1280;
+  const quality = opts?.quality ?? 0.75;
+  const mimeType = opts?.mimeType ?? "image/jpeg";
+
+  // ถ้าไม่ใช่รูป ก็คืนเดิม
+  if (!file.type.startsWith("image/")) return file;
+
+  const imgBitmap = await createImageBitmap(file);
+  let { width, height } = imgBitmap;
+
+  // คำนวณ scale
+  const scale = Math.min(maxWidth / width, maxHeight / height, 1);
+  const newW = Math.round(width * scale);
+  const newH = Math.round(height * scale);
+
+  const canvas = document.createElement("canvas");
+  canvas.width = newW;
+  canvas.height = newH;
+
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return file;
+
+  ctx.drawImage(imgBitmap, 0, 0, newW, newH);
+
+  const blob: Blob = await new Promise((resolve, reject) => {
+    canvas.toBlob(
+      (b) => (b ? resolve(b) : reject(new Error("compress failed"))),
+      mimeType,
+      quality
+    );
+  });
+
+  const ext = mimeType === "image/webp" ? "webp" : "jpg";
+  const newName = file.name.replace(/\.\w+$/, "") + `.${ext}`;
+
+  return new File([blob], newName, { type: mimeType, lastModified: Date.now() });
+}
+
+
   // ---------- โหลดเลขกล่อง AUTO ----------
   useEffect(() => {
     (async () => {
@@ -93,7 +137,7 @@ const NewDepositPage: React.FC = () => {
         const res = await apiFetch<{ storageCode?: string; nextStorageCode?: string }>(
           "/contracts/next-storage-code"
         );
-        const code = res?.storageCode || res?.nextStorageCode || "A-001";
+        const code = res?.storageCode || res?.nextStorageCode || "A001";
         setAsset((prev) => ({
           ...prev,
           storageCode: prev.storageCode || code,
@@ -129,23 +173,32 @@ const NewDepositPage: React.FC = () => {
 
   // ---------- อัพโหลดรูปทรัพย์สิน ----------
   const handleImagesChange = async (e: ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files || !files.length) return;
+  const files = e.target.files;
+  if (!files || !files.length) return;
 
-    const dataUrls: string[] = [];
+  const dataUrls: string[] = [];
 
-    for (const file of Array.from(files)) {
-      try {
-        const dataUrl = await fileToDataUrl(file);
-        dataUrls.push(dataUrl);
-      } catch (err) {
-        console.error("แปลงรูปเป็น base64 ไม่สำเร็จ", err);
-      }
+  for (const file of Array.from(files)) {
+    try {
+      // ✅ บีบอัดก่อน (ปรับค่าได้)
+      const compressed = await compressImage(file, {
+        maxWidth: 1280,
+        maxHeight: 1280,
+        quality: 0.75,
+        mimeType: "image/jpeg",
+      });
+
+      const dataUrl = await fileToDataUrl(compressed);
+      dataUrls.push(dataUrl);
+    } catch (err) {
+      console.error("บีบอัด/แปลงรูปไม่สำเร็จ", err);
     }
+  }
 
-    setImages((prev) => [...prev, ...dataUrls]);
-    e.target.value = "";
-  };
+  setImages((prev) => [...prev, ...dataUrls]);
+  e.target.value = "";
+};
+
 
   // ---------- สแกนบัตร ปชช. ----------
   const handleIdCardFile = async (e: ChangeEvent<HTMLInputElement>) => {
@@ -218,8 +271,15 @@ const NewDepositPage: React.FC = () => {
     try {
       setSubmitting(true);
       setShowSuccess(false);
+const normalizeStorageCodeFE = (s: string) => {
+  const m = (s || "").trim().toUpperCase().match(/^([A-Z])\s*([0-9]{1,3})(?:-.*)?$/);
+  if (!m) return "";
+  const n = Math.max(1, Math.min(999, parseInt(m[2], 10)));
+  return `${m[1]}${String(n).padStart(3, "0")}`;
+};
 
-      let storageCode = asset.storageCode.trim();
+// ...
+let storageCode = normalizeStorageCodeFE(asset.storageCode);
       if (!storageCode) {
         const resCode = await apiFetch<{ storageCode?: string; nextStorageCode?: string }>(
           "/contracts/next-storage-code"

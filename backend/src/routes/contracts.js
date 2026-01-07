@@ -1,8 +1,26 @@
 // backend/src/routes/contracts.js
 import express from "express";
 import { prisma } from "../db.js";
+import axios from "axios";
 
 const router = express.Router();
+
+async function pushLineMessage(lineUserID, messages) {
+  const token = process.env.LINE_CHANNEL_ACCESS_TOKEN;
+  if (!token) throw new Error("Missing LINE_CHANNEL_ACCESS_TOKEN");
+
+  await axios.post(
+    "https://api.line.me/v2/bot/message/push",
+    { to: lineUserID, messages },
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      timeout: 15000,
+    }
+  );
+}
 
 // แนะนำให้ทำ helper ตรงนี้เลย
 async function createCashbookEntry({
@@ -172,7 +190,8 @@ function mapContractToResponse(contract) {
   const assetSerial = contract.assetSerial || contract.itemSerial || "";
   const assetCondition = contract.assetCondition || contract.itemCondition || "";
   const assetAccessories = contract.assetAccessories || contract.itemAccessories || "";
-  const storageCode = contract.storageCode || "";
+  const storageCode = normalizeStorageCode(contract.storageCode) || (contract.storageCode || "");
+
 
   const imagesArr = Array.isArray(contract.images)
   ? contract.images
@@ -273,34 +292,57 @@ function mapContractToResponse(contract) {
 }
 
 
+function normalizeStorageCode(input = "") {
+  // รองรับ: "A952-001" -> "A952", "a12" -> "A012", "B001" -> "B001"
+  const s = String(input).trim().toUpperCase();
+
+  // จับ letter + 1-3 digits และตัดส่วนที่เหลือหลัง dash ทิ้ง
+  const m = s.match(/^([A-Z])\s*0*([0-9]{1,3})(?:-.*)?$/);
+  if (!m) return "";
+
+  const letter = m[1];
+  const num = parseInt(m[2], 10);
+
+  if (!Number.isFinite(num) || num <= 0) return "";
+  const clamped = Math.min(num, 999);
+
+  return `${letter}${String(clamped).padStart(3, "0")}`;
+}
+
+function nextStorageCodeFrom(lastCode) {
+  const last = normalizeStorageCode(lastCode);
+  if (!last) return "A001";
+
+  const letter = last[0];
+  const num = parseInt(last.slice(1), 10);
+
+  if (num < 999) {
+    return `${letter}${String(num + 1).padStart(3, "0")}`;
+  }
+
+  // 999 -> next letter, reset 001
+  const nextLetterCode = letter.charCodeAt(0) + 1;
+  const nextLetter =
+    nextLetterCode <= "Z".charCodeAt(0) ? String.fromCharCode(nextLetterCode) : "A";
+
+  return `${nextLetter}001`;
+}
 
 
 /**
  * สร้างเลขกล่องเก็บถัดไป เช่น A-001, A-002 ...
  */
 async function getNextStorageCode() {
+  // เอา record ล่าสุดตามเวลา/ไอดี (ชัวร์สุด) แล้วค่อย normalize
   const last = await prisma.contract.findFirst({
-    where: {
-      storageCode: {
-        not: null,
-      },
-    },
-    orderBy: {
-      storageCode: "desc",
-    },
+    where: { storageCode: { not: null } },
+    orderBy: { id: "desc" }, // ✅ อย่า orderBy storageCode
+    select: { storageCode: true },
   });
 
-  if (!last || !last.storageCode) {
-    return "A-001";
-  }
-
-  const parts = String(last.storageCode).split("-");
-  const prefix = parts[0] || "A";
-  const num = parseInt(parts[1] || "0", 10);
-  const next = num + 1;
-  const padded = String(next).padStart(3, "0");
-  return `${prefix}-${padded}`;
+  return nextStorageCodeFrom(last?.storageCode);
 }
+
 
 /**
  * สร้างเลขที่สัญญา เช่น DEP-2025-006
@@ -478,6 +520,8 @@ router.post("/", async (req, res) => {
     const allowedTerms = [7, 15, 30];
   const termDaysRaw = Number(financial?.termDays ?? 15);
   const termDays = allowedTerms.includes(termDaysRaw) ? termDaysRaw : 15;
+  const normalizedStorageCode =
+  normalizeStorageCode(asset?.storageCode) || (await getNextStorageCode());
 
     const principal = Number(financial?.principal ?? 0) || 0;
 
@@ -532,7 +576,7 @@ router.post("/", async (req, res) => {
         assetSerial: asset?.serial || "",
         assetCondition: asset?.condition || "",
         assetAccessories: asset?.accessories || "",
-        storageCode: asset?.storageCode || "",
+        storageCode: normalizedStorageCode,
       
 
       // ✅ สร้าง ContractImage แปะกับสัญญา
@@ -1002,6 +1046,71 @@ router.post("/:id/forfeit", async (req, res) => {
   }
 });
 
+router.post("/:id/notify-line", async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ message: "invalid id" });
+
+    const contract = await prisma.contract.findUnique({
+      where: { id },
+      include: { customer: true },
+    });
+
+    if (!contract) return res.status(404).json({ message: "ไม่พบสัญญา" });
+    if (!contract.customer) return res.status(400).json({ message: "สัญญานี้ไม่มีข้อมูลลูกค้า" });
+
+    // ✅ ใช้ field จริงของคุณ
+    const lineUserID = String(contract.customer.lineUserID || "").trim();
+
+    if (!lineUserID) {
+      return res.status(400).json({
+        message: "ลูกค้ายังไม่มี LINE UserID (lineUserID เป็น null) ต้องให้ลูกค้าเพิ่มเพื่อน LINE OA และลงทะเบียนก่อน",
+      });
+    }
+
+    const appUrl = (process.env.APP_PUBLIC_URL || "http://localhost:5173").replace(/\/$/, "");
+    const contractUrl = `${appUrl}/app/contracts/${contract.id}`;
+
+    const principal = Number(contract.principal ?? 0);
+    const feeTotal = Number(contract?.feeConfig?.total ?? 0);
+    const dueDate = contract.dueDate ? new Date(contract.dueDate).toLocaleDateString("th-TH") : "-";
+
+    await pushLineMessage(lineUserID, [
+      {
+        type: "text",
+        text:
+          `📄 สัญญาฝากดูแลทรัพย์สินของคุณ\n` +
+          `เลขที่สัญญา: ${contract.code}\n` +
+          `วงเงิน: ${principal.toLocaleString()} บาท\n` +
+          `ค่าบริการ: ${feeTotal.toLocaleString()} บาท\n` +
+          `ครบกำหนด: ${dueDate}\n\n` +
+          `เปิดดูสัญญาดิจิทัล: ${contractUrl}`,
+      },
+    ]);
+
+    // optional: เก็บ log
+    try {
+      await prisma.contractActionLog.create({
+        data: {
+          contractId: contract.id,
+          action: "NOTIFY_CUSTOMER_LINE",
+          amount: 0,
+          note: `ส่งสัญญาดิจิทัลผ่าน LINE (${lineUserID})`,
+        },
+      });
+    } catch (e) {
+      console.warn("notify log create failed:", e?.message || e);
+    }
+
+    return res.json({ ok: true, message: "ส่งแจ้งเตือนผ่าน LINE สำเร็จ" });
+  } catch (err) {
+    console.error("notify-line error:", err?.response?.data || err);
+    return res.status(500).json({
+      message: "ส่งแจ้งเตือนไม่สำเร็จ",
+      error: err?.message || String(err),
+    });
+  }
+});
 
 
 

@@ -58,6 +58,8 @@ type Contract = {
 
 const swrFetcher = (url: string) => apiFetch<any>(url);
 
+
+
 export function ContractDetailPage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -66,6 +68,24 @@ export function ContractDetailPage() {
   const [isEditingCustomer, setIsEditingCustomer] = useState(false);
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null);
   const [showAllImages, setShowAllImages] = useState(false);
+
+  const [notifyLoading, setNotifyLoading] = useState(false);
+
+const handleNotifyCustomer = async () => {
+  if (notifyLoading) return;
+  const ok = window.confirm("ส่งสัญญาดิจิทัลให้ลูกค้าทาง LINE ใช่ไหม?");
+  if (!ok) return;
+
+  try {
+    setNotifyLoading(true);
+    await apiFetch(`/contracts/${contract.id}/notify-line`, { method: "POST" });
+    alert("ส่งแจ้งเตือนสำเร็จ");
+  } catch (err: any) {
+    alert(err?.message || "ส่งแจ้งเตือนไม่สำเร็จ");
+  } finally {
+    setNotifyLoading(false);
+  }
+};
 
   // ✅ key ต้องเป็น "/contracts/:id" (apiFetch จะต่อกับ BASE_URL ที่ลงท้าย /api)
   const { data, error, mutate } = useSWR<Contract>(
@@ -177,9 +197,8 @@ export function ContractDetailPage() {
     }
   };
 
-  const handleNotifyCustomer = () => {
-    alert("ฟังก์ชันแจ้งเตือนลูกค้ายังไม่ได้เชื่อมต่อ LINE OA");
-  };
+
+
 
   // ---------- แก้ไขข้อมูลลูกค้า ----------
   const handleStartEditCustomer = () => {
@@ -308,12 +327,14 @@ export function ContractDetailPage() {
             <div className="mx-3 h-6 w-px bg-slate-200" />
 
             <button
-              type="button"
-              onClick={handleNotifyCustomer}
-              className="inline-flex items-center rounded-xl bg-emerald-500 px-3 py-2 text-[11px] font-medium text-white hover:bg-emerald-600"
-            >
-              🟢 แจ้งเตือนลูกค้า
-            </button>
+  type="button"
+  onClick={() => handleNotifyCustomer(contract.id)}
+  disabled={notifyLoading}
+  className="inline-flex items-center rounded-xl bg-emerald-600 px-3 py-2 text-[11px] font-medium text-white hover:bg-emerald-700 disabled:opacity-60"
+>
+  {notifyLoading ? "กำลังส่ง..." : "แจ้งเตือนลูกค้า"}
+</button>
+
 
             <button
               type="button"
