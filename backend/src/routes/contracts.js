@@ -1090,8 +1090,7 @@ router.post("/:id/notify-line", async (req, res) => {
           `กล่องเก็บ: ${storageCode}\n` + 
           `วงเงิน: ${principal.toLocaleString()} บาท\n` +
           `ค่าบริการ: ${feeTotal.toLocaleString()} บาท\n` +
-          `ครบกำหนด: ${dueDate}\n\n` +
-          `เปิดดูสัญญาดิจิทัล: ${contractUrl}`,
+          `ครบกำหนด: ${dueDate}`,
       },
     ]);
 
