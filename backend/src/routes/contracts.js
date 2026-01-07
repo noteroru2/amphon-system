@@ -1060,9 +1060,9 @@ router.post("/:id/notify-line", async (req, res) => {
     if (!contract.customer) return res.status(400).json({ message: "สัญญานี้ไม่มีข้อมูลลูกค้า" });
 
     // ✅ ใช้ field จริงของคุณ
-    const lineUserID = String(contract.customer.lineUserID || "").trim();
+    const lineUserId = String(contract.customer.lineUserId || "").trim();
 
-    if (!lineUserID) {
+    if (!lineUserId) {
       return res.status(400).json({
         message: "ลูกค้ายังไม่มี LINE UserID (lineUserID เป็น null) ต้องให้ลูกค้าเพิ่มเพื่อน LINE OA และลงทะเบียนก่อน",
       });
@@ -1075,7 +1075,7 @@ router.post("/:id/notify-line", async (req, res) => {
     const feeTotal = Number(contract?.feeConfig?.total ?? 0);
     const dueDate = contract.dueDate ? new Date(contract.dueDate).toLocaleDateString("th-TH") : "-";
 
-    await pushLineMessage(lineUserID, [
+    await pushLineMessage(lineUserId, [
       {
         type: "text",
         text:
