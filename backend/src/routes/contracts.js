@@ -1074,6 +1074,12 @@ router.post("/:id/notify-line", async (req, res) => {
     const principal = Number(contract.principal ?? 0);
     const feeTotal = Number(contract?.feeConfig?.total ?? 0);
     const dueDate = contract.dueDate ? new Date(contract.dueDate).toLocaleDateString("th-TH") : "-";
+    // ✅ กล่องเก็บ: รองรับทั้ง field ใหม่/เก่า + กันค่าว่าง
+    const storageCode = String(
+      contract.storageCode ||
+      contract.assetStorageCode || // เผื่อเคยมีชื่ออื่น
+      ""
+    ).trim() || "-";
 
     await pushLineMessage(lineUserId, [
       {
@@ -1081,6 +1087,7 @@ router.post("/:id/notify-line", async (req, res) => {
         text:
           `📄 สัญญาฝากดูแลทรัพย์สินของคุณ\n` +
           `เลขที่สัญญา: ${contract.code}\n` +
+          `กล่องเก็บ: ${storageCode}\n` + 
           `วงเงิน: ${principal.toLocaleString()} บาท\n` +
           `ค่าบริการ: ${feeTotal.toLocaleString()} บาท\n` +
           `ครบกำหนด: ${dueDate}\n\n` +
