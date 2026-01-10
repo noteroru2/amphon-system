@@ -106,29 +106,52 @@ export function DepositListPage() {
   }
 
   const calcDueInfo = (dueDate?: string, createdAt?: string) => {
-    const base = dueDate || createdAt;
-    if (!base) return { text: "-", isOver: false };
+  const base = dueDate || createdAt;
+  if (!base) return { text: "-", isOver: false };
 
-    const today = new Date();
-    const due = new Date(base);
-    if (Number.isNaN(due.getTime())) return { text: "-", isOver: false };
+  const tz = "Asia/Bangkok";
 
-    const diffDays = Math.ceil((due.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
-    if (diffDays < 0) return { text: `เลยกำหนด ${Math.abs(diffDays)} วัน`, isOver: true };
-    if (diffDays === 0) return { text: "ครบกำหนดวันนี้", isOver: true };
-    return { text: `เหลือ ${diffDays} วัน`, isOver: false };
+  // แปลง Date -> YYYY-MM-DD ตามเวลาไทย (ตัดเวลาออก)
+  const toThaiYMD = (value: Date) =>
+    new Intl.DateTimeFormat("en-CA", {
+      timeZone: tz,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).format(value); // "YYYY-MM-DD"
+
+  // แปลง YYYY-MM-DD -> day number (นับเป็นจำนวนวันแบบคงที่)
+  const toDayNumber = (ymd: string) => {
+    const [y, m, d] = ymd.split("-").map(Number);
+    return Math.floor(Date.UTC(y, m - 1, d) / 86400000);
   };
+
+  const due = new Date(base);
+  if (Number.isNaN(due.getTime())) return { text: "-", isOver: false };
+
+  const todayYMD = toThaiYMD(new Date());
+  const dueYMD = toThaiYMD(due);
+
+  const diffDays = toDayNumber(dueYMD) - toDayNumber(todayYMD);
+
+  if (diffDays < 0) return { text: `เลยกำหนด ${Math.abs(diffDays)} วัน`, isOver: true };
+  if (diffDays === 0) return { text: "ครบกำหนดวันนี้", isOver: true };
+  return { text: `เหลือ ${diffDays} วัน`, isOver: false };
+};
+
 
   const formatDate = (value?: string) => {
-    if (!value) return "-";
-    const d = new Date(value);
-    if (Number.isNaN(d.getTime())) return "-";
-    return d.toLocaleDateString("th-TH", {
-      day: "2-digit",
-      month: "short",
-      year: "numeric",
-    });
-  };
+  if (!value) return "-";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return "-";
+  return d.toLocaleDateString("th-TH", {
+    timeZone: "Asia/Bangkok",
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+};
+
 
   const getPrincipal = (c: Contract) => {
     if (typeof c.principal === "number") return c.principal;
