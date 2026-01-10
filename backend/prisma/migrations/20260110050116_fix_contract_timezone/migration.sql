@@ -1,0 +1,9 @@
+ALTER TABLE "Contract"
+ALTER COLUMN "startDate"
+TYPE TIMESTAMPTZ
+USING "startDate" AT TIME ZONE 'Asia/Bangkok';
+
+ALTER TABLE "Contract"
+ALTER COLUMN "dueDate"
+TYPE TIMESTAMPTZ
+USING "dueDate" AT TIME ZONE 'Asia/Bangkok';
