@@ -98,6 +98,7 @@ router.get("/", async (req, res) => {
   }
 });
 
+
 router.get("/:id", async (req, res) => {
   try {
     const id = Number(req.params.id);
@@ -105,18 +106,21 @@ router.get("/:id", async (req, res) => {
 
     const customer = await prisma.customer.findUnique({
       where: { id },
-      include: {
-        contracts: {
-          orderBy: { createdAt: "desc" },
-          include: { images: true, cashbookEntries: true, actionLogs: true },
-        },
-        inventoryItemsBought: { orderBy: { createdAt: "desc" } },
+      select: {
+        id: true,
+        name: true,
+        idCard: true,
+        phone: true,
+        lineId: true,
+        lineUserId: true,
+        address: true,
+        createdAt: true,
+        updatedAt: true,
       },
     });
 
     if (!customer) return res.status(404).json({ message: "ไม่พบลูกค้า" });
 
-    // ✅ ฝากขาย: ใช้ sellerCustomerId ก่อน (แม่นสุด) + fallback ด้วย idCard/phone
     const sellerIdCard = clean(customer.idCard);
     const sellerPhone = clean(customer.phone);
 
@@ -126,34 +130,114 @@ router.get("/:id", async (req, res) => {
       sellerPhone ? { sellerPhone } : null,
     ].filter(Boolean);
 
-    const consignments = await prisma.consignmentContract.findMany({
-      where: OR.length ? { OR } : undefined,
-      orderBy: { createdAt: "desc" },
-      include: { inventoryItem: true },
-    });
+    const TAKE = 20;
 
+    const [
+      depositContracts,
+      inventoryBought,
+      inventorySold,
+      consignments,
+
+      depositCount,
+      boughtCount,
+      soldCount,
+      consignCount,
+    ] = await Promise.all([
+      prisma.contract.findMany({
+        where: { customerId: customer.id, type: "DEPOSIT" },
+        orderBy: { createdAt: "desc" },
+        take: TAKE,
+        select: {
+          id: true,
+          code: true,
+          status: true,
+          createdAt: true,
+          dueDate: true,
+          principal: true,
+          storageCode: true,
+          assetModel: true,
+          assetSerial: true,
+        },
+      }),
+
+      prisma.inventoryItem.findMany({
+        where: { buyerCustomerId: customer.id },
+        orderBy: { createdAt: "desc" },
+        take: TAKE,
+        select: {
+          id: true,
+          code: true,
+          name: true,
+          serial: true,
+          status: true,
+          sellingPrice: true,
+          createdAt: true,
+        },
+      }),
+
+      prisma.inventoryItem.findMany({
+        where: { sellerCustomerId: customer.id },
+        orderBy: { createdAt: "desc" },
+        take: TAKE,
+        select: {
+          id: true,
+          code: true,
+          name: true,
+          serial: true,
+          status: true,
+          cost: true,
+          createdAt: true,
+        },
+      }),
+
+      prisma.consignmentContract.findMany({
+        where: OR.length ? { OR } : undefined,
+        orderBy: { createdAt: "desc" },
+        take: TAKE,
+        select: {
+          id: true,
+          code: true,
+          status: true,
+          createdAt: true,
+          targetPrice: true,
+          advanceAmount: true,
+          netToSeller: true,
+          itemName: true,
+          serial: true,
+          inventoryItem: {
+            select: { id: true, code: true, name: true, status: true, sellingPrice: true },
+          },
+        },
+      }),
+
+      prisma.contract.count({ where: { customerId: customer.id, type: "DEPOSIT" } }),
+      prisma.inventoryItem.count({ where: { buyerCustomerId: customer.id } }),
+      prisma.inventoryItem.count({ where: { sellerCustomerId: customer.id } }),
+      prisma.consignmentContract.count({ where: OR.length ? { OR } : undefined }),
+    ]);
+
+    // segments
     const segments = [];
-    if ((customer.inventoryItemsBought || []).length > 0) segments.push("BUYER");
-    if ((customer.contracts || []).some((c) => c.type === "DEPOSIT")) segments.push("DEPOSITOR");
-    if ((consignments || []).length > 0) segments.push("CONSIGNOR");
+    if (boughtCount > 0) segments.push("BUYER");
+    if (soldCount > 0) segments.push("SELLER");
+    if (depositCount > 0) segments.push("DEPOSITOR");
+    if (consignCount > 0) segments.push("CONSIGNOR");
 
     return res.json({
-      customer: {
-        id: customer.id,
-        name: customer.name,
-        idCard: customer.idCard,
-        phone: customer.phone,
-        lineId: customer.lineId,
-        lineToken: customer.lineToken,
-        address: customer.address,
-        createdAt: customer.createdAt,
-        updatedAt: customer.updatedAt,
-        segments,
+      customer: { ...customer, segments },
+      counts: {
+        depositContracts: depositCount,
+        inventoryBought: boughtCount,
+        inventorySold: soldCount,
+        consignments: consignCount,
       },
-      depositContracts: customer.contracts || [],
-      inventoryItemsBought: customer.inventoryItemsBought || [],
-      consignments,
-      salesOrders: [],
+      lists: {
+        depositContracts,
+        inventoryBought,
+        inventorySold,
+        consignments,
+      },
+      salesOrders: [], // เผื่ออนาคต
     });
   } catch (err) {
     console.error("GET /api/customers/:id error:", err);
@@ -163,5 +247,7 @@ router.get("/:id", async (req, res) => {
     });
   }
 });
+
+
 
 export default router;

@@ -42,7 +42,11 @@ const swrFetcher = (url: string) => apiFetch<any>(url);
 
 export function DepositListPage() {
   // ✅ BASE_URL ลงท้าย /api แล้ว ดังนั้นยิง "/contracts"
-  const { data, error } = useSWR("/contracts", swrFetcher);
+  const { data, error } = useSWR(
+  "/contracts/list?type=DEPOSIT&status=ACTIVE&limit=300",
+  swrFetcher
+);
+
   const [search, setSearch] = useState("");
 
   const list: Contract[] = useMemo(() => {

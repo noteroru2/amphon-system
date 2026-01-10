@@ -384,6 +384,64 @@ router.get("/next-storage-code", async (req, res) => {
   }
 });
 
+// GET /api/contracts/list?status=ACTIVE&type=DEPOSIT&limit=200&cursor=123
+router.get("/list", async (req, res) => {
+  try {
+    const status = typeof req.query.status === "string" ? req.query.status : undefined;
+    const type = typeof req.query.type === "string" ? req.query.type : "DEPOSIT";
+
+    const limitRaw = Number(req.query.limit ?? 200);
+    const limit = Number.isFinite(limitRaw) ? Math.min(Math.max(limitRaw, 1), 500) : 200;
+
+    const cursorRaw = req.query.cursor ? Number(req.query.cursor) : null;
+    const cursor = Number.isFinite(cursorRaw) ? cursorRaw : null;
+
+    const where = { type };
+    if (status) where.status = status;
+
+    const rows = await prisma.contract.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+      take: limit + 1,
+      ...(cursor ? { skip: 1, cursor: { id: cursor } } : {}),
+      select: {
+        id: true,
+        code: true,
+        type: true,
+        status: true,
+        createdAt: true,
+        dueDate: true,
+        termDays: true,
+        principal: true,
+        storageCode: true,
+
+        assetModel: true,
+        assetSerial: true,
+        assetCondition: true,
+        assetAccessories: true,
+
+        customer: {
+          select: {
+            id: true,
+            name: true,
+            phone: true,
+          },
+        },
+      },
+    });
+
+    const hasMore = rows.length > limit;
+    const items = (hasMore ? rows.slice(0, limit) : rows).map((c) => mapContractToResponse(c));
+    const nextCursor = hasMore ? items[items.length - 1]?.id : null;
+
+    return res.json({ items, nextCursor });
+  } catch (err) {
+    console.error("GET /api/contracts/list error:", err);
+    return res.status(500).json({ message: "ไม่สามารถดึงรายการสัญญาได้", error: String(err) });
+  }
+});
+
+
 // แสดงรายการสัญญา (ใช้ในหน้า รายการรับฝาก)
 router.get("/", async (req, res) => {
   try {
